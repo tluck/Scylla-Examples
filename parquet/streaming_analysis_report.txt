@@ -1,0 +1,63 @@
+STREAMING BIGTABLE DATA ANALYSIS REPORT
+============================================================
+
+Processing Summary:
+Total Records Processed: 100
+Total Cells Processed: 52056
+Processing Errors: 0
+Average Cells per Record: 520.56
+
+COLUMN FAMILY DISTRIBUTION:
+----------------------------------------
+e: 23888 cells
+d: 7835 cells
+if: 5933 cells
+ib: 4512 cells
+of: 3514 cells
+ci: 2873 cells
+pb: 2542 cells
+t: 404 cells
+cb: 226 cells
+mp: 175 cells
+up: 81 cells
+dc: 60 cells
+is: 10 cells
+ie: 3 cells
+
+TOP 20 QUALIFIERS:
+----------------------------------------
+30: 101 occurrences
+al: 81 occurrences
+1: 74 occurrences
+B_APP_BUNDLES_W_REV_60_DAYS_BUCKETIZED_GENRE_PANDA: 69 occurrences
+B_D90_PB_EVENTS_GENRE: 69 occurrences
+B_D90_PB_EVENTS_SUB_GENRE: 69 occurrences
+B_D90_PB_GAMING_EVENTS: 69 occurrences
+B_D90_PB_GAMING_IAP_EVENTS: 69 occurrences
+B_D90_PB_GAMING_KPI_EVENTS: 69 occurrences
+B_D90_PB_KPI_EVENTS_GENRE: 69 occurrences
+B_D90_PB_KPI_EVENTS_SUB_GENRE: 69 occurrences
+CB_APP_BUNDLES_W_REV_60_DAYS_BUCKETIZED_LENGTH_PANDA: 69 occurrences
+D30_PAYER_PROFILE_PAY_ACTION_CNT_SUM: 56 occurrences
+D30_PAYER_PROFILE_PAY_EVENT_DATES_CNT: 56 occurrences
+D30_PAYER_PROFILE_PAY_REVENUE_SUM: 56 occurrences
+D30_MBTW_CNT: 55 occurrences
+D30_MBTW_SOURCE_GENRE: 55 occurrences
+D30_MBTW_SOURCE_IS_INTERSTITIAL: 55 occurrences
+D30_MBTW_SOURCE_VIDEO_TYPE: 55 occurrences
+D30_MBTW_SUM: 55 occurrences
+
+FAMILIES PER ROW DISTRIBUTION:
+----------------------------------------
+1 families: 3 rows
+2 families: 3 rows
+3 families: 2 rows
+4 families: 7 rows
+5 families: 9 rows
+6 families: 9 rows
+7 families: 9 rows
+8 families: 17 rows
+9 families: 11 rows
+10 families: 16 rows
+11 families: 11 rows
+12 families: 3 rows

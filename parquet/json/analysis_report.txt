@@ -1,0 +1,44 @@
+BIGTABLE DATA ANALYSIS REPORT
+==================================================
+
+Total Records: 11
+Total Cells: 9899
+Average Cells per Record: 899.91
+
+FAMILY DISTRIBUTION:
+------------------------------
+e: 4731 cells
+d: 1524 cells
+if: 1360 cells
+ib: 1000 cells
+ci: 479 cells
+pb: 413 cells
+of: 258 cells
+dc: 60 cells
+cb: 37 cells
+mp: 17 cells
+t: 12 cells
+up: 8 cells
+
+TOP 20 QUALIFIERS:
+------------------------------
+30: 10 occurrences
+B_D90_PB_EVENTS_GENRE: 8 occurrences
+B_D90_PB_EVENTS_SUB_GENRE: 8 occurrences
+B_D90_PB_KPI_EVENTS_SUB_GENRE: 8 occurrences
+B_APP_BUNDLES_W_REV_60_DAYS_BUCKETIZED_GENRE_PANDA: 8 occurrences
+B_D90_PB_GAMING_EVENTS: 8 occurrences
+B_D90_PB_GAMING_IAP_EVENTS: 8 occurrences
+B_D90_PB_GAMING_KPI_EVENTS: 8 occurrences
+B_D90_PB_KPI_EVENTS_GENRE: 8 occurrences
+CB_APP_BUNDLES_W_REV_60_DAYS_BUCKETIZED_LENGTH_PANDA: 8 occurrences
+al: 8 occurrences
+1: 7 occurrences
+D7_MBTW_AVG_INTERSTITIAL_NON_REWARD_VID_G_PUZZLE: 4 occurrences
+D30_MBTW_SOURCE_GENRE: 4 occurrences
+D7_MBTW_AVG_INTERSTITIAL_NON_REWARD_VID_G_HYPERCASUAL: 4 occurrences
+D7_MBTW_AVG_INTERSTITIAL_REWARD_VID: 4 occurrences
+D7_MBTW_AVG_INTERSTITIAL_REWARD_VID_G_TABLETOP: 4 occurrences
+D30_MBTW_SOURCE_IS_INTERSTITIAL: 4 occurrences
+D30_MBTW_SUM: 4 occurrences
+D7_MBTW_AVG_INTERSTITIAL_REWARD_VID_G_HYPERCASUAL: 4 occurrences
