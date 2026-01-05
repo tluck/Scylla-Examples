@@ -12,8 +12,8 @@ from multiprocessing import get_context, cpu_count
 from cassandra.cluster import Cluster, ExecutionProfile, EXEC_PROFILE_DEFAULT
 from cassandra.concurrent import execute_concurrent_with_args
 from cassandra import ConsistencyLevel
+from cassandra.policies import DCAwareRoundRobinPolicy, TokenAwarePolicy, WhiteListRoundRobinPolicy
 from cassandra.auth import PlainTextAuthProvider
-from cassandra.policies import DCAwareRoundRobinPolicy, TokenAwarePolicy
 
 # Constants
 COMPRESSION = "'sstable_compression': 'ZstdWithDictsCompressor'"
@@ -31,14 +31,14 @@ def parse_args():
     parser.add_argument('-u', '--username', default="cassandra", help='Cassandra username')
     parser.add_argument('-p', '--password', default="cassandra", help='Cassandra password')
     parser.add_argument('-k', '--keyspace', default="mykeyspace", help='Keyspace name')
-    parser.add_argument('-d', '--drop', action="store_true", help='Drop keyspace if exists')
     parser.add_argument('-t', '--table', default="myTable", help='Table name')
+    parser.add_argument('-d', '--drop', action="store_true", help='Drop table if exists')
     parser.add_argument('-r', '--row_count', type=int, default=100000, help='Number of rows to insert')
     parser.add_argument('-b', '--batch_size', type=int, default=2000, help='Batch size for inserts')
     parser.add_argument('--cl', default="LOCAL_QUORUM", help="Consistency Level (ONE, TWO, QUORUM, etc.)")
     parser.add_argument('--dc', default='dc1', help='Local datacenter name for ScyllaDB')
-    parser.add_argument('--workers', type=int, default=0, help='Number of worker processes (0 = cpu_count())')
-    parser.add_argument('--shard_aware', action="store_true", help='If set, you should pass host:19042 to connect to shard-aware port')
+    parser.add_argument('-w', '--workers', type=int, default=0, help='Number of worker processes (0 = cpu_count())')
+    parser.add_argument('-o', '--offset', type=int, default=0, help='Offset for ID generation to avoid collisions across runs')
     return parser.parse_args()
 
 def str_time_prop(start, end, fmt, prop):
@@ -96,34 +96,31 @@ def _init_worker_rng(worker_index):
     random.seed(seed)
     Faker.seed(seed)
 
-def _build_cluster_and_session(hosts, username, password, dc, local_loopback, shard_aware=False ):
+def _build_cluster_and_session(hosts, username, password, dc):
     # Create fresh Cluster/Session per process, post-fork
     port=9042
-    if shard_aware:
-        port=19042
+    local_loopback = (hosts and hosts[0] in ('127.0.0.1', 'localhost'))
 
     if local_loopback:
-        profile = ExecutionProfile(load_balancing_policy=DCAwareRoundRobinPolicy(local_dc=dc), request_timeout=30)
-        cluster = Cluster(
-            hosts,
-            auth_provider=PlainTextAuthProvider(username=username, password=password),
-            execution_profiles={EXEC_PROFILE_DEFAULT: profile},
-            port=port,
-            protocol_version=4,
-            connect_timeout=30,
-            control_connection_timeout=30
-        )
+        logging.info("Local loopback detected, disabling shard-aware routing.") 
+        # profile = ExecutionProfile(load_balancing_policy=DCAwareRoundRobinPolicy(local_dc=dc), request_timeout=30)
+        logger.info(f"Using WhiteListRoundRobinPolicy with hosts: {hosts}")
+        policy = WhiteListRoundRobinPolicy(hosts)
+        profile = ExecutionProfile(load_balancing_policy=policy, request_timeout=30)
     else:
-        profile = ExecutionProfile(load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy(local_dc=dc)))
-        cluster = Cluster(
-            contact_points=hosts,
-            auth_provider=PlainTextAuthProvider(username=username, password=password),
-            execution_profiles={EXEC_PROFILE_DEFAULT: profile},
-            port=port,
-            protocol_version=4,
-            connect_timeout=30,
-            control_connection_timeout=30
-        )
+        logging.info("Using TokenAwarePolicy with DCAwareRoundRobinPolicy for cluster connection")
+        profile = ExecutionProfile(load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy(local_dc=dc)), request_timeout=30)
+
+    cluster = Cluster(
+        contact_points=hosts,
+        port=port,
+        shard_aware_options=dict(disable=local_loopback),
+        auth_provider=PlainTextAuthProvider(username=username, password=password),
+        execution_profiles={EXEC_PROFILE_DEFAULT: profile},
+        protocol_version=4,
+        connect_timeout=30,
+        control_connection_timeout=30
+    )
     session = cluster.connect()
     return cluster, session
 
@@ -139,14 +136,12 @@ def _worker_insert_range(
     start_id,
     end_id,
     batch_size,
-    local_loopback,
-    shard_aware
+    offset
 ):
     # Per-process RNG
     _init_worker_rng(worker_index)
     fake = Faker()
-
-    cluster, session = _build_cluster_and_session(hosts, username, password, dc, local_loopback, shard_aware)
+    cluster, session = _build_cluster_and_session(hosts, username, password, dc)
     try:
         # Prepare statement per worker
         cql = f"""INSERT INTO {keyspace}.{table} (id, ssn, imei, os, phonenum, balance, pdate, v1, v2, v3, v4, v5) VALUES (?,?,?,?,?,?,?, ?,?,?,?,?)"""
@@ -156,7 +151,7 @@ def _worker_insert_range(
         total = 0
         total_failed = 0
         for (s_id, e_id) in chunked_ids(start_id, end_id, batch_size):
-            batch = [generate_row(fake, i) for i in range(s_id, e_id + 1)]
+            batch = [generate_row(fake, i+offset) for i in range(s_id, e_id + 1)]
             results = execute_concurrent_with_args(session, prepared, batch, concurrency=100)
             failed = sum(1 for (success, _) in results if not success)
             total += len(batch)
@@ -188,11 +183,10 @@ def insert_data_parallel(
     row_count,
     batch_size,
     workers,
-    shard_aware
+    offset
 ):
     # One control session in parent to create schema (safe and simple)
-    local_loopback = (hosts and hosts[0] == '127.0.0.1')
-    ctrl_cluster, ctrl_session = _build_cluster_and_session(hosts, username, password, dc, local_loopback, shard_aware)
+    ctrl_cluster, ctrl_session = _build_cluster_and_session(hosts, username, password, dc)
     try:
         create_schema(ctrl_session, keyspace, table, tablets, compression)
     finally:
@@ -217,7 +211,7 @@ def insert_data_parallel(
         jobs = []
         for w in range(procs):
             start_id = w * span + 1
-            end_id = min((w + 1) * span, row_count)
+            end_id = min((w + 1) * span, row_count) 
             if start_id > end_id:
                 continue
             jobs.append(pool.apply_async(
@@ -234,8 +228,7 @@ def insert_data_parallel(
                     start_id=start_id,
                     end_id=end_id,
                     batch_size=batch_size,
-                    local_loopback=local_loopback,
-                    shard_aware=shard_aware
+                    offset=offset
                 )
             ))
         pool.close()
@@ -265,10 +258,10 @@ def main():
     try:
         if opts.drop:
             # Use ephemeral parent session to drop keyspace to avoid races
-            cluster, session = _build_cluster_and_session(hosts, opts.username, opts.password, opts.dc, hosts[0] == '127.0.0.1', opts.shard_aware)
+            cluster, session = _build_cluster_and_session(hosts, opts.username, opts.password, opts.dc)
             try:
-                logger.info(f"Dropping keyspace {opts.keyspace} if exists.")
-                session.execute(f"DROP KEYSPACE IF EXISTS {opts.keyspace};")
+                logger.info(f"Dropping table {opts.keyspace}.{opts.table} if exists.")
+                session.execute(f"DROP TABLE IF EXISTS {opts.keyspace}.{opts.table};")
             finally:
                 try:
                     session.shutdown()
@@ -293,7 +286,7 @@ def main():
             row_count=opts.row_count,
             batch_size=opts.batch_size,
             workers=opts.workers,
-            shard_aware=opts.shard_aware
+            offset=opts.offset
         )
         elapsed = datetime.datetime.now() - start_time
         logger.info(f"Total insertion time: {elapsed}")
@@ -303,4 +296,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
