@@ -10,7 +10,7 @@ public class Main {
             .withAuthCredentials("cassandra", "cassandra")
             .build()) {
 
-      ResultSet rs = session.execute("SELECT release_version FROM system.local");
+      ResultSet rs = session.execute("SELECT version FROM system.versions WHERE key = 'local';");
       System.out.println(rs.one().getString(0));
     }
   }

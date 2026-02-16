@@ -5,3 +5,10 @@ pandas
 faker
 lz4 
 python-snappy
+boto3
+pylint>=3.3.6
+botocore>=1.37.33
+autopep8>=2.3.2
+pytest>=8.3.5
+ruff>=0.11.5
+requests>=2.32.3

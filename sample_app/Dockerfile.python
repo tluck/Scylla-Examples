@@ -1,5 +1,5 @@
-# Use the Python 3.12 slim image
-ARG VERSION=3.12-slim
+# Use the Python slim image
+ARG VERSION=3.13-slim
 FROM python:${VERSION}
 
 # Set the working directory in the container
@@ -9,7 +9,7 @@ RUN apt update -y
 RUN apt install -y jq python3-pip git tar vim curl
 # Copy the requirements.txt file and install dependencies
 # Copy the Python script into the container
-COPY requirements.txt run*bash *.py /app
+COPY requirements.txt run*bash get*bash *.py alternator/ alternator-client-python/*py /app
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 # run

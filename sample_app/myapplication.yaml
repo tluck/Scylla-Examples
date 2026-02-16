@@ -36,6 +36,10 @@ spec:
       key:  kubernetes.io/arch
       operator: Equal
       value: arm64
+    - effect: NoSchedule
+      key: scylla-operator.scylladb.com/dedicated
+      operator: Equal
+      value: application
   volumes:
     - name: devshm
       emptyDir:
