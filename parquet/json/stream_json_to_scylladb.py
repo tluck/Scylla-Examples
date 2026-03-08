@@ -29,7 +29,7 @@ parser.add_argument('-x', action="store_true", dest="EXPORT_CSV", help='Export t
 parser.add_argument('-f', '--file', type=str, default="input.json", help='Path to the input JSON file')
 parser.add_argument('-M', '--mode', type=int, default=0, help='compression type')
 parser.add_argument('-c', '--chunk-size', type=int, default=1000, help='Number of records to process in each chunk')
-parser.add_argument('-b', '--batch-size', type=int, default=100, help='Number of records to insert in each batch')
+parser.add_argument('-b', '--batch_size', type=int, default=100, help='Number of records to insert in each batch')
 parser.add_argument('-m', '--max-memory', type=int, default=500, help='Maximum memory usage in MB before forcing garbage collection')
 parser.add_argument('-i', '--progress-interval', type=int, default=1000, help='Show progress every N records')
 opts = parser.parse_args()
@@ -41,7 +41,7 @@ FILENAME = opts.file
 EXPORT_CSV = opts.EXPORT_CSV
 MODE = opts.mode
 CHUNK_SIZE = opts.chunk_size
-BATCH_SIZE = opts.batch_size
+batch_size = opts.batch_size
 MAX_MEMORY_MB = opts.max_memory
 PROGRESS_INTERVAL = opts.progress_interval
 
@@ -60,7 +60,7 @@ compression = ["'sstable_compression': 'ZstdCompressor'",
                ""]
 
 print(f"ScyllaDB IPs: {SCYLLA_IP}", f"Username: {USERNAME}", f"Password: {PASSWORD}")
-print(f"Chunk size: {CHUNK_SIZE}, Batch size: {BATCH_SIZE}")
+print(f"Chunk size: {CHUNK_SIZE}, Batch size: {batch_size}")
 print(f"Filename: {FILENAME}, Export CSV: {EXPORT_CSV}")
 print(f"Compression Mode: {compression[MODE]}")
 
@@ -73,7 +73,7 @@ class StreamingBigtableProcessor:
     Streaming approach: Process large Bigtable JSON files in chunks without loading everything into memory
     """
 
-    def __init__(self, json_file_path: str, chunk_size: int = CHUNK_SIZE, batch_size: int = BATCH_SIZE):
+    def __init__(self, json_file_path: str, chunk_size: int = CHUNK_SIZE, batch_size: int = batch_size):
         self.json_file_path = json_file_path
         self.chunk_size = chunk_size
         self.batch_size = batch_size
@@ -363,7 +363,7 @@ def main():
     json_file = FILENAME # 'prod_revised.json'
 
     # Initialize streaming processor
-    processor = StreamingBigtableProcessor(json_file, CHUNK_SIZE, BATCH_SIZE)
+    processor = StreamingBigtableProcessor(json_file, CHUNK_SIZE, batch_size)
 
     try:
         logger.info("Starting streaming Bigtable data processing...")

@@ -20,7 +20,7 @@ KEYSPACE = "moloco"
 TABLE = "table_w_zstd"
 CQL = f"INSERT INTO {KEYSPACE}.{TABLE} (row_key, family, qualifier, timestamp, timestamp_micros, value_b64) VALUES (?, ?, ?, ?, ?, ?)"
 
-BATCH_SIZE = 2
+batch_size = 2
 CHUNK_SIZE = 2
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -98,8 +98,8 @@ def main(json_file_path):
             # Preprocess chunk into DB parameter rows
             processed_rows = pool.apply(process_chunk_for_insert, (records_chunk,))
             # Batch and send to Scylla
-            for i in range(0, len(processed_rows), BATCH_SIZE):
-                batch = processed_rows[i:i + BATCH_SIZE]
+            for i in range(0, len(processed_rows), batch_size):
+                batch = processed_rows[i:i + batch_size]
                 print("Flushing batch to Scylla:", i)
                 flush_to_scylla(batch)   # Async insert
 

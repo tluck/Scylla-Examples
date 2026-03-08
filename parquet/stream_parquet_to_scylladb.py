@@ -27,7 +27,7 @@ parser.add_argument('-x', action="store_true", dest="EXPORT_CSV", help='Export t
 parser.add_argument('-k', action="store_true", dest="DROP_KEYSPACE", help='Drop keyspace')
 parser.add_argument('-f', '--file', type=str, default="input.parquet", help='Path to the input JSON file')
 parser.add_argument('-M', '--mode', type=int, default=0, help='compression type')
-parser.add_argument('-b', '--batch-size', type=int, default=4000, help='Number of records to insert in each batch')
+parser.add_argument('-b', '--batch_size', type=int, default=4000, help='Number of records to insert in each batch')
 parser.add_argument('-m', '--max-memory', type=int, default=1024, help='Maximum memory usage in MB before forcing garbage collection')
 parser.add_argument('-i', '--progress-interval', type=int, default=50, help='Show progress every N records')
 parser.add_argument('--log', default='INFO', help='Set logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)')
@@ -43,7 +43,7 @@ EXPORT_CSV = opts.EXPORT_CSV
 DROP_KEYSPACE = opts.DROP_KEYSPACE
 MODE = opts.mode
 # CHUNK_SIZE = opts.chunk_size
-BATCH_SIZE = opts.batch_size
+batch_size = opts.batch_size
 MAX_MEMORY_MB = opts.max_memory
 PROGRESS_INTERVAL = opts.progress_interval
 LOCAL_DC = opts.LOCAL_DC
@@ -67,15 +67,15 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 logger.info(f"ScyllaDB IPs: {SCYLLA_IP}, Username: {USERNAME}, Password: {PASSWORD}")
-logger.info(f"Using batch size: {BATCH_SIZE}")
+logger.info(f"Using batch size: {batch_size}")
 logger.info(f"Reading from filename: {FILENAME}")
 if EXPORT_CSV:
     logger.info(f"Exporting to CSV file: {FILENAME.replace('.parquet', '.csv')}")
 logger.info(f"Compression mode: {compression[MODE]}")
 
 class StreamingBigtableProcessor:
-    # def __init__(self, parquet_file_path: str, chunk_size: int = CHUNK_SIZE, batch_size: int = BATCH_SIZE):
-    def __init__(self, parquet_file_path: str, batch_size: int = BATCH_SIZE):
+    # def __init__(self, parquet_file_path: str, chunk_size: int = CHUNK_SIZE, batch_size: int = batch_size):
+    def __init__(self, parquet_file_path: str, batch_size: int = batch_size):
         self.parquet_file_path = parquet_file_path
         # self.chunk_size = chunk_size
         self.batch_size = batch_size
@@ -370,7 +370,7 @@ def main():
     parquet_file = FILENAME # 'input.parquet'
 
     # Initialize streaming processor
-    processor = StreamingBigtableProcessor(parquet_file, batch_size=BATCH_SIZE)
+    processor = StreamingBigtableProcessor(parquet_file, batch_size=batch_size)
     try:
         logger.info("Starting streaming Bigtable data processing...")
 
