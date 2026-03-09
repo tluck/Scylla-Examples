@@ -1,16 +1,19 @@
-# Multi-arch: supports both amd64 + arm64 (AWS Graviton, Apple M-series)
-FROM --platform=$BUILDPLATFORM eclipse-temurin:17-jre
+FROM --platform=$BUILDPLATFORM maven:3.9-eclipse-temurin-21
 
-# Smaller image, ARM64 optimized
-LABEL org.opencontainers.image.source="https://github.com/scylladb"
+# 
+COPY cql-java-ingest /app/cql-java-ingest
+WORKDIR /app/cql-java-ingest
+RUN mvn clean package -DskipTests
+# 
+COPY alternator-java-ingest /app/alternator-java-ingest
+WORKDIR /app/alternator-java-ingest
+RUN mvn clean package -DskipTests
 
+# Runtime stage - copy just the JAR
+#FROM eclipse-temurin:21-jre
 WORKDIR /app
 
-# Copy JAR (supports multi-arch COPY)
-COPY target/alternator-loader-1.0-SNAPSHOT.jar app.jar
-
-# JVM tuned for containers + ARM64
-ENV JAVA_OPTS="-Xmx1g -XX:+UseG1GC -XX:MaxRAMPercentage=75.0 -Djava.awt.headless=true"
-
-# ARM64 + amd64 compatible entrypoint
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar ${@}"]
+#COPY --from=0 /app/cql-java-ingest/target/*.jar cql-java-ingest.jar
+ENV JAVA_OPTS="-Xmx1g -XX:MaxRAMPercentage=75.0 -Djava.awt.headless=true"
+# CMD ["java", "$JAVA_OPTS", "-jar", "cql-java-ingest.jar"]
+CMD ["sleep", "infinity"]

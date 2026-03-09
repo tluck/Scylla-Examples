@@ -1,13 +1,15 @@
-# Build image
-myRegistry=docker.io/tjlscylladb
+#!/usr/bin/env bash
 
-# Enable Buildx (multi-arch support)
-docker buildx create --use --name multiarch
+[[ -e init.conf ]] && source init.conf
+myRegistry="docker.io/tjlscylladb"
+imageVersion="21-jre"  # or "21.0.7_6-jre" for latest stable patch [web:12]
 
-# Build + push for BOTH architectures
+printf "%s\n" "Building ${myRegistry}/java-apps:${imageVersion}"
+docker login
+docker image rm ${myRegistry}/java-apps:${imageVersion} 2>/dev/null || true
 docker buildx build \
-  --platform linux/amd64,linux/arm64 \
-  --tag ${myRegistry}/alternator-loader:1.0 \
-  --push \
-  .
-
+    --platform linux/amd64,linux/arm64 \
+    --file Dockerfile.java \
+    -t ${myRegistry}/java-apps:${imageVersion} \
+    -t ${myRegistry}/java-apps:latest \
+    --push .

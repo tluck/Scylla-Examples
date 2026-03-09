@@ -29,15 +29,14 @@ import java.util.stream.LongStream;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static java.util.concurrent.TimeUnit.MINUTES; 
 
-@CommandLine.Command(name = "scylla-loader", mixinStandardHelpOptions = true, version = "4.1")
+@CommandLine.Command(name = "scylla-loader", mixinStandardHelpOptions = true, version = "5.0",
+    description = "ScyllaDB data loader with optimized schema and batch modes")
 public class ScyllaLoader implements Runnable {
     private static final Logger logger = LoggerFactory.getLogger(ScyllaLoader.class);
     
     private static final long WORKER_TIMEOUT_SECONDS = 600;
     private static final long SHUTDOWN_TIMEOUT_SECONDS = 30;
     private static final int VERIFY_SAMPLE_SIZE = 10;
-    //private static final String COMPRESSION = "compression = {}";
-    //private static final String COMPRESSION = "compression = {'sstable_compression': 'LZ4Compressor'}";
     private static final String COMPRESSION = "compression = {'sstable_compression': 'ZstdWithDictsCompressor'}";
 
     enum BatchMode {
@@ -52,7 +51,7 @@ public class ScyllaLoader implements Runnable {
     @Option(names = {"-k", "--keyspace"}, defaultValue = "mercado") String keyspace = "mercado";
     @Option(names = {"-t", "--table"}, defaultValue = "userid") String table = "userid";
     @Option(names = {"-d", "--drop"}, description = "Drop existing table before creating new one") boolean drop;
-    @Option(names = {"-r", "--row_count"}, defaultValue = "1_000_000") long rowCount = 1000000;
+    @Option(names = {"-r", "--row_count"}, defaultValue = "1000000") long rowCount = 1000000;
     @Option(names = {"-b", "--batch_size"}, defaultValue = "256") int batchSize = 256;
     @Option(names = {"-w", "--workers"}, defaultValue = "0") int workers = 0;
     @Option(names = {"-o", "--offset"}, defaultValue = "0") long offset = 0;
@@ -72,7 +71,7 @@ public class ScyllaLoader implements Runnable {
     @Override
     public void run() {
         Instant start = Instant.now();
-        logger.info("ScyllaDB Loader v4.0 - Token Aware + Shard Optimized + Production Ready");
+        logger.info("ScyllaDB Loader {} Data Model (individual columns)", "5.0");
         logger.info("Loading {} rows -> {}.{}", rowCount, keyspace, table);
 
         List<String> hostList = parseHosts();
@@ -100,7 +99,6 @@ public class ScyllaLoader implements Runnable {
 
         AtomicLong totalRows = new AtomicLong();
         AtomicLong totalFailed = new AtomicLong();
-        // AtomicLong progressCounter = new AtomicLong();
 
         ExecutorService executor = Executors.newFixedThreadPool(effectiveWorkers);
         List<CompletableFuture<WorkerResult>> futures = new ArrayList<>();
@@ -111,15 +109,14 @@ public class ScyllaLoader implements Runnable {
                 long endId = Math.min((long) (w + 1) * span + offset, rowCount + offset);
                 if (startId > endId) return;
                 
-                WorkerTask task = new WorkerTask(w, startId, endId, hostList, port, /*progressCounter,i*/ this);
+                WorkerTask task = new WorkerTask(w, startId, endId, hostList, port, this);
                 CompletableFuture<WorkerResult> future = CompletableFuture.supplyAsync(task::call, executor);
                 futures.add(future);
             });
 
-            // FIXED TIMEOUT HANDLING - Replace the entire try block:
             try {
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                    .get(30, MINUTES);  // 30 minutes for 20M rows
+                    .get(30, MINUTES);
             } catch (TimeoutException e) {
                 logger.warn("Main timeout - collecting partial results");
             }
@@ -136,21 +133,19 @@ public class ScyllaLoader implements Runnable {
                 }
             }
 
-        } catch (Exception e) {  // Catch ALL worker exceptions here
+        } catch (Exception e) {
             logger.error("Worker execution failed", e);
-            totalFailed.addAndGet(rowCount);  // Assume all failed
+            totalFailed.addAndGet(rowCount);
         } finally {
             shutdownExecutor(executor);
         }
 
-
         long elapsedMs = Duration.between(start, Instant.now()).toMillis();
         double rate = totalRows.get() / Math.max(elapsedMs / 1000.0, 1.0);
-        logger.info(String.format("COMPLETE: %,d inserted | %,d failed", 
+        logger.info(String.format("\u2705 COMPLETE: %,d inserted | %,d failed", 
             totalRows.get(), totalFailed.get()));
-        logger.info(String.format("FINISHED: %,d rows in %.1fs (%,.0f rows/sec)", 
-            totalRows.get(), elapsedMs / 1000.0, rate));
-
+        logger.info(String.format("\u2705 FINISHED: time elapsed %.1fs (%,.0f rows/sec)", 
+            elapsedMs / 1000.0, rate));
 
         if (verify) {
             verifyRows(hostList, port);
@@ -173,19 +168,37 @@ public class ScyllaLoader implements Runnable {
         public long failed() { return failed; }
     }
 
+    // ✅ NEW: RowData uses individual columns instead of attrs map
     public static class RowData {
         private final String userid;
-        private final Map<String, String> attrs;
+        private final String chunkPath;
+        private final int compressionVersion;
+        private final long startByteRange;
+        private final long endByteRange;
+        private final long lastUpdatedMillis;
+        private final int ttl;
         private final long timestamp;
 
-        public RowData(String userid, Map<String, String> attrs, long timestamp) {
+        public RowData(String userid, String chunkPath, int compressionVersion, 
+                      long startByteRange, long endByteRange, long lastUpdatedMillis, 
+                      int ttl, long timestamp) {
             this.userid = userid;
-            this.attrs = attrs;
+            this.chunkPath = chunkPath;
+            this.compressionVersion = compressionVersion;
+            this.startByteRange = startByteRange;
+            this.endByteRange = endByteRange;
+            this.lastUpdatedMillis = lastUpdatedMillis;
+            this.ttl = ttl;
             this.timestamp = timestamp;
         }
 
         public String userid() { return userid; }
-        public Map<String, String> attrs() { return attrs; }
+        public String chunkPath() { return chunkPath; }
+        public int compressionVersion() { return compressionVersion; }
+        public long startByteRange() { return startByteRange; }
+        public long endByteRange() { return endByteRange; }
+        public long lastUpdatedMillis() { return lastUpdatedMillis; }
+        public int ttl() { return ttl; }
         public long timestamp() { return timestamp; }
     }
 
@@ -194,17 +207,15 @@ public class ScyllaLoader implements Runnable {
         final long startId, endId;
         final List<String> hosts;
         final String port;
-        // final AtomicLong progressCounter;
         final ScyllaLoader config;
 
         WorkerTask(int workerIndex, long startId, long endId, List<String> hosts, 
-                  String port, /*AtomicLong progressCounter,i */ ScyllaLoader config) {
+                  String port, ScyllaLoader config) {
             this.workerIndex = workerIndex;
             this.startId = startId;
             this.endId = endId;
             this.hosts = hosts;
             this.port = port;
-            // this.progressCounter = progressCounter;
             this.config = config;
         }
 
@@ -214,8 +225,9 @@ public class ScyllaLoader implements Runnable {
             long total = 0, failed = 0;
 
             try (CqlSession session = config.buildScyllaOptimizedSession(hosts, port)) {
+                // ✅ NEW: Prepared statement matches new schema
                 PreparedStatement prepared = session.prepare(
-                    "INSERT INTO %s.%s (userid, attrs) VALUES (?, ?) USING TIMESTAMP ? AND TIMEOUT 60s"
+                    "INSERT INTO %s.%s (userid, chunk_path, compression_version, start_byte_range, end_byte_range, last_updated_millis, ttl) VALUES (?, ?, ?, ?, ?, ?, ?) USING TIMESTAMP ? AND TTL ?"
                         .formatted(config.keyspace, config.table));
 
                 logger.info("W{}: {} mode (batch_size={})", 
@@ -228,34 +240,15 @@ public class ScyllaLoader implements Runnable {
                         .mapToObj(j -> generateRowFast(nowMs ^ workerIndex ^ j, j, nowMs))
                         .toList();
                     if (batchRows.isEmpty()) continue;
-                    
-                    // if (config.batchMode == BatchMode.none) {
-                    //     for (RowData row : batchRows) {
-                    //         try {
-                    //             session.execute(prepared.bind(row.userid(), row.attrs(), row.timestamp()));
-                    //             total++;
-                    //         } catch (Exception e) {
-                    //             failed++;
-                    //             logger.debug("W{}: Failed row {}: {}", workerIndex, row.userid(), e.getMessage());
-                    //         }
-                    //     }
-                    //} else {
-                        long failedInBatch = executeBatch(session, prepared, batchRows);
-                        total += batchRows.size();
-                        failed += failedInBatch;
-                    //}
+                    long failedInBatch = executeBatch(session, prepared, batchRows);
+                    total += batchRows.size();
+                    failed += failedInBatch;
                 }
             } catch (Exception e) {
                 logger.error("Worker {} completely failed: {}", workerIndex, e.getMessage(), e);
                 failed = endId - startId + 1;
             }
             return new WorkerResult(workerIndex, total, failed);
-        }
-
-        private List<RowData> generateBatchRows(long seed, long start, long end, long nowMs) {
-            return LongStream.range(start, end + 1)
-                .mapToObj(j -> generateRowFast(seed ^ j, j, nowMs))
-                .toList();
         }
 
         private long executeBatch(CqlSession session, PreparedStatement prepared, 
@@ -274,7 +267,11 @@ public class ScyllaLoader implements Runnable {
                 List<CompletableFuture<Boolean>> futures = batchRows.stream()
                     .map(row -> CompletableFuture.supplyAsync(() -> {
                         try {
-                            session.execute(prepared.bind(row.userid(), row.attrs(), row.timestamp()));
+                            // ✅ NEW: Bind individual columns
+                            session.execute(prepared.bind(
+                                row.userid(), row.chunkPath(), row.compressionVersion(),
+                                row.startByteRange(), row.endByteRange(), row.lastUpdatedMillis(),
+                                row.ttl(), row.timestamp(), row.ttl() ));
                             return true;
                         } catch (Exception e) {
                             logger.debug("Concurrent failed row {}: {}", row.userid(), e.getMessage());
@@ -294,7 +291,11 @@ public class ScyllaLoader implements Runnable {
             try {
                 BatchStatementBuilder batch = BatchStatement.builder(BatchType.LOGGED);
                 for (RowData row : batchRows) {
-                    batch.addStatement(prepared.bind(row.userid(), row.attrs(), row.timestamp()));
+                    // ✅ NEW: Bind individual columns
+                    batch.addStatement(prepared.bind(
+                        row.userid(), row.chunkPath(), row.compressionVersion(),
+                        row.startByteRange(), row.endByteRange(), row.lastUpdatedMillis(),
+                        row.ttl(), row.timestamp(), row.ttl() ));
                 }
                 session.execute(batch.build());
                 return 0;
@@ -311,7 +312,11 @@ public class ScyllaLoader implements Runnable {
             try {
                 BatchStatementBuilder batch = BatchStatement.builder(BatchType.UNLOGGED);
                 for (RowData row : batchRows) {
-                    batch.addStatement(prepared.bind(row.userid(), row.attrs(), row.timestamp()));
+                    // ✅ NEW: Bind individual columns
+                    batch.addStatement(prepared.bind(
+                        row.userid(), row.chunkPath(), row.compressionVersion(),
+                        row.startByteRange(), row.endByteRange(), row.lastUpdatedMillis(),
+                        row.ttl(), row.timestamp(), row.ttl() ));
                 }
                 session.execute(batch.build());
                 return 0;
@@ -328,7 +333,11 @@ public class ScyllaLoader implements Runnable {
             long failed = 0;
             for (RowData row : batchRows) {
                 try {
-                    session.execute(prepared.bind(row.userid(), row.attrs(), row.timestamp()));
+                    // ✅ NEW: Bind individual columns
+                    session.execute(prepared.bind(
+                        row.userid(), row.chunkPath(), row.compressionVersion(),
+                        row.startByteRange(), row.endByteRange(), row.lastUpdatedMillis(),
+                        row.ttl(), row.timestamp(), row.ttl() ));
                 } catch (Exception e) {
                     failed++;
                     logger.debug("W{}: Failed row {}: {}", workerIndex, row.userid(), e.getMessage());
@@ -336,31 +345,52 @@ public class ScyllaLoader implements Runnable {
             }
             return failed;
         }
-        final Map<String, String> reusableAttrs = new HashMap<>(6); 
+
+        // ✅ NEW: Reusable fields for this worker (thread-local performance)
+        private final StringBuilder chunkPathBuilder = new StringBuilder(64);
+        private final Random reusableRandom = new Random(); // Will be seeded per row
+        
         private RowData generateRowFast(long seed, long i, long nowMs) {
-            Random rand = new Random(seed);
-            long baseTime = nowMs - rand.nextInt(3_600_000);
+            reusableRandom.setSeed(seed);
             
-            String uuidStr = String.format("%032x", rand.nextLong());
+            // ✅ FIXED: Random within last 1 hour (no future values)
+            long oneHourMs = 3_600_000;  // 60 * 60 * 1000
+            long lastUpdatedMillis = nowMs - oneHourMs + reusableRandom.nextLong(oneHourMs);
+            
+            String uuidStr = String.format("%032x", reusableRandom.nextLong());
             String chunkHash = uuidStr.substring(0, 32);
             
-            int month = 1 + rand.nextInt(12);
-            int day = 1 + rand.nextInt(31);
-            String yearSuffix = (rand.nextInt(2) == 0) ? "5" : "6";
+            int month = 1 + reusableRandom.nextInt(12);
+            int day = 1 + reusableRandom.nextInt(31);
+            String yearSuffix = (reusableRandom.nextInt(2) == 0) ? "5" : "6";
             
-            // ✅ REUSE this.reusableAttrs (this worker only)
-            this.reusableAttrs.clear();
-            this.reusableAttrs.put("chunk_path", String.format("dmd/%02d/%02d/202%s/%s", month, day, yearSuffix, chunkHash));
-            this.reusableAttrs.put("compression_version", String.valueOf(1 + rand.nextInt(5)));
-            this.reusableAttrs.put("start_byte_range", String.valueOf(400_000 + rand.nextInt(1_100_001)));
-            this.reusableAttrs.put("end_byte_range", String.valueOf(500_000 + rand.nextInt(1_500_001)));
-            this.reusableAttrs.put("last_updated_millis", String.valueOf(baseTime + rand.nextInt(604_800_000)));
-            this.reusableAttrs.put("ttl", String.valueOf(2_592_000 + rand.nextInt(28_944_000)));
+            // ✅ Build chunk_path efficiently
+            chunkPathBuilder.setLength(0);
+            chunkPathBuilder.append("dmd/")
+                        .append(String.format("%02d", month))
+                        .append('/')
+                        .append(String.format("%02d", day))
+                        .append("/202")
+                        .append(yearSuffix)
+                        .append('/')
+                        .append(chunkHash);
             
-            return new RowData("user" + i, this.reusableAttrs, nowMs);
+            return new RowData(
+                "user" + i,
+                chunkPathBuilder.toString(),
+                1 + reusableRandom.nextInt(5),
+                400_000 + reusableRandom.nextInt(1_100_001),
+                500_000 + reusableRandom.nextInt(1_500_001),
+                lastUpdatedMillis,  // ✅ Now: now-1hr ± random(1hr)
+                // ✅ FIXED: TTL 45-90 days (seconds)
+                (int)(45 * 24 * 3600L + reusableRandom.nextInt(46 * 24 * 3600)),
+                lastUpdatedMillis // set timestamp to match last_updated_millis 
+            );
         }
 
     }
+
+    // ... [All other methods unchanged: buildScyllaOptimizedSession, createSslContext, etc.]
 
     private CqlSession buildScyllaOptimizedSession(List<String> hosts, String portStr) {
         List<InetSocketAddress> contactPoints = hosts.stream()
@@ -376,7 +406,7 @@ public class ScyllaLoader implements Runnable {
             .withAuthCredentials(username, password)
             .withConfigLoader(DriverConfigLoader.programmaticBuilder()
                 .withBoolean(DefaultDriverOption.METADATA_TOKEN_MAP_ENABLED, true)
-                .withInt(DefaultDriverOption.CONNECTION_POOL_LOCAL_SIZE, 3)  // 1 conn/node
+                .withInt(DefaultDriverOption.CONNECTION_POOL_LOCAL_SIZE, 3)
                 .withDuration(DefaultDriverOption.REQUEST_TIMEOUT, Duration.ofSeconds(60))
                 .build());
 
@@ -445,25 +475,40 @@ public class ScyllaLoader implements Runnable {
 
     private void verifyRows(List<String> hosts, String port) {
         try (CqlSession session = buildScyllaOptimizedSession(hosts, port)) {
-            ResultSet countResult = session.execute("SELECT COUNT(*) FROM %s.%s"
-                .formatted(keyspace, table));
-            long totalCount = countResult.one().getLong(0);
-            logger.info("TABLE COUNT: {} rows", totalCount);
 
             PreparedStatement prepared = session.prepare(
-                "SELECT * FROM %s.%s WHERE userid = ?".formatted(keyspace, table));
+                "SELECT userid, chunk_path, compression_version, start_byte_range, end_byte_range, last_updated_millis, ttl, " +
+                "TTL(ttl) as ttl_remaining, WRITETIME(chunk_path) as path_writetime " +
+                "FROM %s.%s WHERE userid = ?"
+                    .formatted(keyspace, table));
             
             Random rand = new Random(42);
-            int verified = 0;
             int sampleSize = Math.min(VERIFY_SAMPLE_SIZE, (int) rowCount);
+            logger.info(String.format("✅ Verification: getting %,d rows", sampleSize));
             
             for (int i = 0; i < sampleSize; i++) {
                 long sampleId = offset + 1 + (long) (rand.nextDouble() * (rowCount - 1));
-                if (session.execute(prepared.bind("user" + sampleId)).one() != null) {
-                    verified++;
+                String userid = "user" + sampleId;
+                Row row = session.execute(prepared.bind(userid)).one();
+                
+                if (row != null) {
+                    logger.info("user {}: chunk_path={}, compression={}, start_byte_range={}, end_byte_range={}, last_updated_millis={}, ttl={}",
+                        userid,
+                        row.getString("chunk_path"),
+                        row.getInt("compression_version"),
+                        row.getLong("start_byte_range"),
+                        row.getLong("end_byte_range"),
+                        row.getLong("last_updated_millis"),
+                        row.getInt("ttl")
+                    );
+                    logger.info("     TTL(ttl) remaining (seconds)={}, WRITETIME(chunk_path) (epoch ms)={}",
+                        row.getInt("ttl_remaining"),
+                        row.getLong("path_writetime")
+                    );
+                } else {
+                    logger.warn("❌ user {}: NOT FOUND", userid);
                 }
             }
-            logger.info("VERIFIED: {}/{} random sample rows OK", verified, sampleSize);
         } catch (Exception e) {
             logger.error("Verify failed: {}", e.getMessage());
         }
@@ -483,20 +528,26 @@ public class ScyllaLoader implements Runnable {
         session.execute(keyspaceCql.toString());
         logger.info("✅ Created keyspace {} (tablets={})", keyspace, tablets ? "enabled" : "disabled");
 
+        // ✅ NEW: Matches exact schema from your CREATE TABLE
         String tableCql = """
             CREATE TABLE IF NOT EXISTS %s.%s (
                 userid text PRIMARY KEY,
-                attrs map<text, text>
+                chunk_path text,
+                compression_version int,
+                start_byte_range bigint,
+                end_byte_range bigint,
+                last_updated_millis bigint,
+                ttl int
             ) WITH %s
             """.formatted(keyspace, table, COMPRESSION);
         session.execute(tableCql);
-        logger.info("✅ Created table {}.{} compression: {}", keyspace, table, COMPRESSION);
+        logger.info("✅ Created table {}.{} (new data model)", keyspace, table);
     }
 
     private void dropTable(CqlSession session) {
         try {
             session.execute(SimpleStatement.builder("DROP TABLE IF EXISTS %s.%s".formatted(keyspace, table))
-                .setTimeout(Duration.ofSeconds(120))  // Server truncate timeout is 60s default
+                .setTimeout(Duration.ofSeconds(120))
                 .build()
             );
             logger.info("✅ Dropped table {}.{}", keyspace, table);

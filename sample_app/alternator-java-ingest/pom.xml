@@ -8,20 +8,20 @@
   <version>1.0-SNAPSHOT</version>
 
   <properties>
-    <maven.compiler.source>17</maven.compiler.source>
-    <maven.compiler.target>17</maven.compiler.target>
-    <maven.compiler.release>17</maven.compiler.release>
+    <maven.compiler.source>21</maven.compiler.source>
+    <maven.compiler.target>21</maven.compiler.target>
+    <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <scylla.driver.version>4.19.0.5</scylla.driver.version>
   </properties>
 
   <dependencies>
     <!-- Apache Cassandra Java Driver 4.x (NEW coordinates) -->
-    <dependency>
-      <groupId>org.apache.cassandra</groupId>
-      <artifactId>java-driver-core</artifactId>
-      <version>4.19.0.5</version>
-    </dependency>
-
+      <dependency>
+          <groupId>com.scylladb</groupId>
+          <artifactId>java-driver-core</artifactId>
+          <version>${scylla.driver.version}</version>
+      </dependency>
     <!-- AWS SDK v2 DynamoDB + HTTP client -->
     <dependency>
       <groupId>software.amazon.awssdk</groupId>

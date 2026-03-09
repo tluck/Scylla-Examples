@@ -9,7 +9,7 @@ interval=2  # Interval between checks in seconds
 elapsed=0
 
 source gcp_init.conf
-nodes=${NODE_LIST:-scylla-client}
+nodes=${CONTACT_POINTS:-scylla-client}
 dc=${DC:-dc1}
 username=${USERNAME:-cassandra}
 password=${PASSWORD:-cassandra}
