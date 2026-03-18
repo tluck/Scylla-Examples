@@ -9,7 +9,12 @@ import argparse
 API_BASE_URL = "https://api.cloud.scylladb.com"
 API_TOKEN = os.getenv('SC_TOKEN')
 accountId = os.getenv('SC_ACCOUNT')
-
+default_version="2025.4.5"
+default_cidr = "172.30.0.0/24"
+default_instance_gcp = "n2-highmem-2"
+default_instance_aws = "i8g.large"
+default_region_gcp = "us-west1"
+default_region_aws = "us-west-2"
 
 def get_headers():
     return {
@@ -17,18 +22,15 @@ def get_headers():
         "Content-Type": "application/json"
     }
 
-
 def api_get(url):
     resp = requests.get(url, headers=get_headers())
     resp.raise_for_status()
     return resp.json()
 
-
 def api_post(url, data):
     resp = requests.post(url, headers=get_headers(), data=json.dumps(data))
     resp.raise_for_status()
     return resp.json()
-
 
 def build_parser():
     parser = argparse.ArgumentParser(
@@ -42,7 +44,7 @@ def build_parser():
 
     # show cluster
     p_show = subparsers.add_parser("show", help="Show cluster JSON")
-    p_show.add_argument("-s", "--show", metavar="CLUSTER_ID",
+    p_show.add_argument("-c", "--cluster", metavar="CLUSTER_ID",
                         help="Show cluster details by ID")
 
     # delete cluster
@@ -79,7 +81,7 @@ def build_parser():
     )
     p_create.add_argument(
         "-t", "--instance-type",
-        help="Instance type (e.g. default n2-highmem-2, i4i.xlarge)"
+        help=f"Instance type (e.g. default {default_instance_gcp}, {default_instance_aws})"
     )
     p_create.add_argument(
         "-d", "--disk",
@@ -93,20 +95,20 @@ def build_parser():
     )
     p_create.add_argument(
         "-r", "--region",
-        help="Region (default: us-west1 for GCP, us-west-2 for AWS)"
+        help=f"Region (default: {default_region_gcp} for GCP, {default_region_aws} for AWS)"
     )
     p_create.add_argument(
         "-i", "--cidr",
-        help="CIDR block for the cluster VPC (default: 172.30.0.0/24)"
+        help=f"CIDR block for the cluster VPC (default: {default_cidr})"
     )
     p_create.add_argument(
         "-f", "--replication",
         type=int,
-        help="Replication factor (default: 3)"
+        help=f"Replication factor (default: {default_version})"
     )
     p_create.add_argument(
         "-s", "--scylla-version",
-        help="Scylla version (default: 2025.3.3)"
+        help=f"Scylla version (default: {default_version})"
     )
 
     return parser
@@ -118,14 +120,12 @@ def handle_list():
     for cl in clusters.get('data', {}).get('clusters', []):
         print(f"{cl.get('id')} {cl.get('clusterName')}")
 
-
 def handle_show(cluster_id):
     if not cluster_id:
         print("Cluster ID required for show")
         sys.exit(1)
     cluster = api_get(f"{API_BASE_URL}/account/{accountId}/cluster/{cluster_id}")
     print(json.dumps(cluster, indent=2))
-
 
 def handle_delete(cluster_id, name):
     if not cluster_id or not name:
@@ -141,7 +141,6 @@ def handle_delete(cluster_id, name):
     resp = api_post(f"{API_BASE_URL}/account/{accountId}/cluster/{cluster_id}/delete", data)
     print(json.dumps(resp, indent=2))
 
-
 def handle_create(args):
     cloud = args.cloud
     mode = args.mode
@@ -152,9 +151,9 @@ def handle_create(args):
 
     # choose defaults per cloud
     if cloud == "gcp":
-        instanceType = custom_instance if custom_instance else "n2-highmem-2"
+        instanceType = custom_instance if custom_instance else default_instance_gcp
         localDiskCount = custom_disks if custom_disks is not None else 1
-        region = args.region if args.region else "us-west1"
+        region = args.region if args.region else default_region_gcp
         # name construction: use provided name if given, otherwise default pattern
         if args.name:
             name = args.name
@@ -162,9 +161,9 @@ def handle_create(args):
             name = f"tjl-gcp-{instanceType}-{localDiskCount}"
         cloudProviderId = 2
     else:
-        instanceType = custom_instance if custom_instance else "i4i.large"
+        instanceType = custom_instance if custom_instance else default_instance_aws
         localDiskCount = custom_disks  # For AWS, keep None if not specified
-        region = args.region if args.region else "us-west-2"
+        region = args.region if args.region else default_region_aws
         if args.name:
             name = args.name
         else:
@@ -173,9 +172,9 @@ def handle_create(args):
 
     name = name.replace('.', '-')
     owner = "Account"
-    cidr = args.cidr if args.cidr else "172.30.0.0/24"
+    cidr = args.cidr if args.cidr else default_cidr
     replication = args.replication if args.replication else 3
-    scylla_version = args.scylla_version if args.scylla_version else "2025.3.3"
+    scylla_version = args.scylla_version if args.scylla_version else default_version
 
     print(f"Creating cluster '{name}' with instance type: {instanceType}", end="")
     if localDiskCount is not None:
@@ -278,7 +277,7 @@ def main():
     if args.command == "list":
         handle_list()
     elif args.command == "show":
-        handle_show(args.show)
+        handle_show(args.cluster)
     elif args.command == "delete":
         handle_delete(args.delete, args.cluster_name)
     elif args.command == "create":
@@ -286,7 +285,6 @@ def main():
     else:
         parser.print_help()
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

@@ -17,8 +17,7 @@ if [[ $1 == "gcp" ]]; then
   name="tjl-gcp-$instanceType-$mode"
   name="${name//./-}"
 else
-  instanceType="t3.micro" #instanceType="i4i.large" # id=62
-  instanceType="i4i.large" # id=62
+  instanceType="i8g.large" # instanceType="tmicro"
   mode=${2:-"xcloud"} # "standard" or "xcloud"
   cloudProviderId=1
   region="us-west-2"
@@ -99,7 +98,7 @@ base_json=$(jq -n \
   --argjson regionId "$regionId" \
   --arg clusterName "$name" \
   --argjson replicationFactor 3 \
-  --arg scyllaVersion "2025.3.3" \
+  --arg scyllaVersion "2025.4.5" \
   --arg userApiInterface "CQL" \
   --arg tablets "enforced" \
   --argjson freeTier false \

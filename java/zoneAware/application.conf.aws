@@ -1,0 +1,33 @@
+datastax-java-driver {
+
+  basic {
+    contact-points = [
+      "node-2.aws-us-west-2.6081f40a1bb45d3c6daa.clusters.scylla.cloud:19042",
+      "node-1.aws-us-west-2.6081f40a1bb45d3c6daa.clusters.scylla.cloud:19042",
+      "node-0.aws-us-west-2.6081f40a1bb45d3c6daa.clusters.scylla.cloud:19042",
+    ]
+
+    load-balancing-policy {
+      local-datacenter = "AWS_US_WEST_2"
+      local-rack = "usw2-az2"
+      slow-replica-avoidance = false 
+    }
+  }
+
+  advanced {
+    auth-provider {
+      class = PlainTextAuthProvider
+      username = "scylla"
+      password = "DZL9wN5PAfGl2Eh"
+    }
+
+    load-balancing-policy {
+      allow-remote-dc-connections = false
+    }
+
+    connection {
+      pool.local.size = 8        # LOCAL: 8 conns
+      pool.remote.size = 1       # REMOTE: 1 conn  
+    }
+  }
+}
