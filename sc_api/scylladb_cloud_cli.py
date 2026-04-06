@@ -9,7 +9,7 @@ import argparse
 API_BASE_URL = "https://api.cloud.scylladb.com"
 API_TOKEN = os.getenv('SC_TOKEN')
 accountId = os.getenv('SC_ACCOUNT')
-default_version="2025.4.5"
+default_version="2026.1.0"
 default_cidr = "172.30.0.0/24"
 default_instance_gcp = "n2-highmem-2"
 default_instance_aws = "i8g.large"

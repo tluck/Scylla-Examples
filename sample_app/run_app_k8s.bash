@@ -11,7 +11,7 @@ if [[ -n "$1" && "$1" == *.py ]]; then
     py_script="$1"
     shift # Remove the Python script from the argument list
     py_args="$@"
-    python "$py_script" -u ${username} -p ${password} -s ${contact_points} ${py_args}
+    python "$py_script" -u ${username} -p ${password} -s ${contact_points} --dc ${dc} ${py_args}
 elif [[ -n "$1" && "$1" == cqlsh ]]; then
     contact_points="${cluster}-client-headless.${cluster}-${dc}.svc"
     shift
