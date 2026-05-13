@@ -98,7 +98,7 @@ base_json=$(jq -n \
   --argjson regionId "$regionId" \
   --arg clusterName "$name" \
   --argjson replicationFactor 3 \
-  --arg scyllaVersion "2025.4.5" \
+  --arg scyllaVersion "2026.1.2" \
   --arg userApiInterface "CQL" \
   --arg tablets "enforced" \
   --argjson freeTier false \

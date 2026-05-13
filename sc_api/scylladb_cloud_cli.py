@@ -9,7 +9,7 @@ import argparse
 API_BASE_URL = "https://api.cloud.scylladb.com"
 API_TOKEN = os.getenv('SC_TOKEN')
 accountId = os.getenv('SC_ACCOUNT')
-default_version="2026.1.0"
+default_version="2026.1.3"
 default_cidr = "172.30.0.0/24"
 default_instance_gcp = "n2-highmem-2"
 default_instance_aws = "i8g.large"
@@ -182,13 +182,13 @@ def handle_create(args):
     else:
         print()
 
-    # Get cloudCredentialId
+    # Get cloudCredentialId (highest id if several match owner + cloud provider)
     cloud_accounts = api_get(f"{API_BASE_URL}/account/{accountId}/cloud-account")
-    cloudCredentialId = next(
-        (x['id'] for x in cloud_accounts.get('data', [])
-         if x.get('owner') == owner and x.get('cloudProviderId') == cloudProviderId),
-        None
-    )
+    matches = [
+        x for x in cloud_accounts.get('data', [])
+        if x.get('owner') == owner and x.get('cloudProviderId') == cloudProviderId
+    ]
+    cloudCredentialId = max((x['id'] for x in matches), default=None)
     print(f"Cloud Credential ID: {cloudCredentialId}")
 
     # Get regionId
