@@ -3,13 +3,14 @@
 import os
 import sys
 import json
+import time
 import requests
 import argparse
 
 API_BASE_URL = "https://api.cloud.scylladb.com"
 API_TOKEN = os.getenv('SC_TOKEN')
 accountId = os.getenv('SC_ACCOUNT')
-default_version="2026.1.3"
+default_version="2026.1.7"
 default_cidr = "172.30.0.0/24"
 default_instance_gcp = "n2-highmem-2"
 default_instance_aws = "i8g.large"
@@ -29,6 +30,11 @@ def api_get(url):
 
 def api_post(url, data):
     resp = requests.post(url, headers=get_headers(), data=json.dumps(data))
+    resp.raise_for_status()
+    return resp.json()
+
+def api_put(url, data):
+    resp = requests.put(url, headers=get_headers(), data=json.dumps(data))
     resp.raise_for_status()
     return resp.json()
 
@@ -109,6 +115,41 @@ def build_parser():
     p_create.add_argument(
         "-s", "--scylla-version",
         help=f"Scylla version (default: {default_version})"
+    )
+
+    # scale (resize) an xcloud cluster to a vCPU minimum
+    p_scale = subparsers.add_parser(
+        "scale",
+        help="Scale in/out (resize) an xcloud cluster to a vCPU minimum and monitor progress"
+    )
+    p_scale.add_argument(
+        "-c", "--cluster",
+        metavar="CLUSTER_ID",
+        required=True,
+        help="Cluster ID to scale"
+    )
+    p_scale.add_argument(
+        "-v", "--vcpu",
+        type=int,
+        required=True,
+        help="Minimum total vCPU count to scale to"
+    )
+    p_scale.add_argument(
+        "--interval",
+        type=int,
+        default=15,
+        help="Polling interval in seconds while monitoring (default: 15)"
+    )
+    p_scale.add_argument(
+        "--timeout",
+        type=int,
+        default=3600,
+        help="Maximum time in seconds to monitor progress (default: 3600)"
+    )
+    p_scale.add_argument(
+        "--no-monitor",
+        action="store_true",
+        help="Submit the resize but do not wait/monitor progress"
     )
 
     return parser
@@ -270,6 +311,146 @@ def handle_create(args):
     print(json.dumps(response, indent=2))
 
 
+# Request statuses that mean a cluster request is no longer running
+DONE_STATUSES = {"COMPLETED", "FAILED", "CANCELLED", "ERROR"}
+# Request types produced by a scaling policy change / resize
+RESIZE_TYPES = {"AUTOSCALING", "RESIZE_CLUSTER", "RESIZE_CLUSTER_V3", "RESIZE"}
+
+def get_cluster(cluster_id):
+    resp = api_get(f"{API_BASE_URL}/account/{accountId}/cluster/{cluster_id}")
+    return resp.get('data', {}).get('cluster', {})
+
+def list_requests(cluster_id):
+    resp = api_get(f"{API_BASE_URL}/account/{accountId}/cluster/{cluster_id}/request")
+    return resp.get('data', []) or []
+
+def get_nodes(cluster_id):
+    resp = api_get(f"{API_BASE_URL}/account/{accountId}/cluster/{cluster_id}/nodes")
+    return resp.get('data', {}).get('nodes') or resp.get('data') or []
+
+def node_summary(nodes):
+    # Tally nodes by lifecycle status + topology state, e.g.
+    # "6 nodes: 4 ACTIVE/NORMAL, 2 BOOTSTRAPPING/JOINING"
+    from collections import Counter
+    tally = Counter(
+        f"{n.get('status', '?')}/{n.get('state', '?')}" for n in nodes
+    )
+    breakdown = ", ".join(f"{cnt} {label}" for label, cnt in sorted(tally.items()))
+    return f"{len(nodes)} nodes: {breakdown}"
+
+def request_done(req):
+    return req.get('status') in DONE_STATUSES or req.get('progressPercent', 0) >= 100
+
+def handle_scale(args):
+    cluster_id = args.cluster
+    target_vcpu = args.vcpu
+
+    cluster = get_cluster(cluster_id)
+    if not cluster:
+        print(f"ERROR: Cluster {cluster_id} not found")
+        sys.exit(1)
+
+    if cluster.get('scalingMode') != 'xcloud':
+        print(f"ERROR: Cluster {cluster_id} is '{cluster.get('scalingMode')}' mode; "
+              "scale-to-vCPU is only supported for xcloud clusters")
+        sys.exit(1)
+
+    dc = cluster.get('dc') or (cluster.get('dataCenters') or [{}])[0]
+    dc_id = dc.get('id')
+    if not dc_id:
+        print(f"ERROR: Could not determine data center for cluster {cluster_id}")
+        sys.exit(1)
+
+    # Preserve the existing scaling policy, changing only the vCPU minimum.
+    scaling = dc.get('scaling', {}) or {}
+    policies = scaling.get('policies', {}) or {}
+    storage = policies.get('storage', {}) or {"min": 0, "targetUtilization": 0.8}
+    current_min = (policies.get('vcpu', {}) or {}).get('min')
+
+    new_scaling = {
+        "mode": cluster.get('scalingMode', 'xcloud'),
+        "instanceTypeIDs": scaling.get('instanceTypeIDs', []),
+        "policies": {
+            "storage": storage,
+            "vcpu": {"min": target_vcpu}
+        }
+    }
+
+    print(f"Scaling cluster '{cluster.get('clusterName')}' ({cluster_id}) "
+          f"vCPU minimum: {current_min} -> {target_vcpu}")
+    print(json.dumps(new_scaling, indent=2))
+
+    # Snapshot existing request IDs so we can detect the ones this change triggers.
+    before_ids = {r.get('id') for r in list_requests(cluster_id)}
+
+    resp = api_put(
+        f"{API_BASE_URL}/account/{accountId}/cluster/{cluster_id}/dc/{dc_id}/scaling",
+        new_scaling
+    )
+    print(json.dumps(resp, indent=2))
+
+    if args.no_monitor:
+        print("Resize submitted. Skipping monitoring (--no-monitor).")
+        return
+
+    monitor_scale(cluster_id, before_ids, args.interval, args.timeout)
+
+def monitor_scale(cluster_id, before_ids, interval, timeout):
+    print("\nMonitoring resize progress (Ctrl-C to stop watching)...")
+    start = time.time()
+    deadline = start + timeout
+    seen_new = False
+
+    while time.time() < deadline:
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        requests_now = list_requests(cluster_id)
+        # Only consider requests created by this scale operation.
+        new_reqs = [
+            r for r in requests_now
+            if r.get('id') not in before_ids
+            and r.get('requestType') in RESIZE_TYPES
+        ]
+
+        if new_reqs:
+            seen_new = True
+            nodes = get_nodes(cluster_id)
+            print(f"  {ts} {node_summary(nodes)}")
+            for n in sorted(nodes, key=lambda x: x.get('id', 0)):
+                print(f"      node {n.get('id')} [{n.get('rackName', '?')}]: "
+                      f"{n.get('status', '?')}/{n.get('state', '?')}")
+            for r in sorted(new_reqs, key=lambda x: x.get('id', 0)):
+                pct = r.get('progressPercent', 0)
+                desc = r.get('progressDescription') or r.get('status', '')
+                err = r.get('userFriendlyError')
+                line = f"  {ts} [{r.get('requestType')}] {r.get('status')} {pct}% - {desc}"
+                if err:
+                    line += f" (error: {err})"
+                print(line)
+
+            failed = [r for r in new_reqs if r.get('status') in ("FAILED", "ERROR", "CANCELLED")]
+            if failed:
+                print("Resize did not complete successfully.")
+                sys.exit(1)
+
+            if all(request_done(r) for r in new_reqs):
+                cluster = get_cluster(cluster_id)
+                vcpu_min = (((cluster.get('dc') or {}).get('scaling') or {})
+                            .get('policies', {}).get('vcpu', {}).get('min'))
+                elapsed = int(time.time() - start)
+                print(f"Resize complete in {elapsed // 60}m{elapsed % 60}s. "
+                      f"Cluster status: {cluster.get('status')}, vCPU minimum: {vcpu_min}, "
+                      f"{node_summary(get_nodes(cluster_id))}")
+                return
+        elif not seen_new:
+            print(f"  {ts} Waiting for resize request to be created...")
+
+        print("-" * 40)
+        time.sleep(interval)
+
+    print(f"Timed out after {timeout}s waiting for resize to complete.")
+    sys.exit(1)
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
@@ -282,6 +463,8 @@ def main():
         handle_delete(args.delete, args.cluster_name)
     elif args.command == "create":
         handle_create(args)
+    elif args.command == "scale":
+        handle_scale(args)
     else:
         parser.print_help()
         sys.exit(1)
