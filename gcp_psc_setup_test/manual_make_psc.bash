@@ -1,7 +1,7 @@
-#!/bin/bash
+ #!/bin/bash
 
 [[ $1 == "-d" ]] && cleanup=true || cleanup=false
-[[ $1 == "-c" ]] && CLUSTER_ID=$2 || CLUSTER_ID="45344"
+[[ $1 == "-c" ]] && CLUSTER_ID=$2
 
 set -euo pipefail
 set -x
@@ -21,11 +21,13 @@ PSC_CIDR="172.31.1.0/24"      # PSC NAT subnet
 # === VPC names (update if different)
 # SDB_VPC="np-66093-bc554453-0e5f-4e48-8311-dfdce05898d7"
 APP_VPC="default"
-CLUSTER_ID="45344"
+# this will bring in the variables
+source nodes.conf
+# CLUSTER_ID="45344"
 # === NODES ===
-NODE_a='scylla-cloud-45344-node-3-48cfe68e3619bfe02cfc'
-NODE_b='scylla-cloud-45344-node-4-48cfe68e3619bfe02cfc'
-NODE_c='scylla-cloud-45344-node-5-48cfe68e3619bfe02cfc'
+# NODE_a='scylla-cloud-45344-node-3-48cfe68e3619bfe02cfc'
+# NODE_b='scylla-cloud-45344-node-4-48cfe68e3619bfe02cfc'
+# NODE_c='scylla-cloud-45344-node-5-48cfe68e3619bfe02cfc'
 # === RESOURCE NAMES ===
 SERVICE_NAME="psc-${CLUSTER_ID}"
 APP_NAME="psc-${APP_VPC}"

@@ -7,9 +7,10 @@ ZONE_a="${REGION}-a"
 ZONE_b="${REGION}-b" 
 ZONE_c="${REGION}-c"
 
-NODE_a='scylla-cloud-45344-node-3-48cfe68e3619bfe02cfc'
-NODE_b='scylla-cloud-45344-node-4-48cfe68e3619bfe02cfc'
-NODE_c='scylla-cloud-45344-node-5-48cfe68e3619bfe02cfc'
+source nodes.conf
+# NODE_a='scylla-cloud-45344-node-3-48cfe68e3619bfe02cfc'
+# NODE_b='scylla-cloud-45344-node-4-48cfe68e3619bfe02cfc'
+# NODE_c='scylla-cloud-45344-node-5-48cfe68e3619bfe02cfc'
 
 NODE_NETWORK=$(gcloud compute instances describe ${NODE_a} \
     --zone="${ZONE_a}" --format='value(networkInterfaces[0].network)' --quiet)

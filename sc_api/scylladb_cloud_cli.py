@@ -10,7 +10,7 @@ import argparse
 API_BASE_URL = "https://api.cloud.scylladb.com"
 API_TOKEN = os.getenv('SC_TOKEN')
 accountId = os.getenv('SC_ACCOUNT')
-default_version="2026.1.7"
+default_version="2026.2.1"
 default_cidr = "172.30.0.0/24"
 default_instance_gcp = "n2-highmem-2"
 default_instance_aws = "i8g.large"
@@ -110,7 +110,7 @@ def build_parser():
     p_create.add_argument(
         "-f", "--replication",
         type=int,
-        help=f"Replication factor (default: {default_version})"
+        help=f"Replication factor (default: 3)"
     )
     p_create.add_argument(
         "-s", "--scylla-version",
