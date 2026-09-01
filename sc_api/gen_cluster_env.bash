@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+
+# Generate a shell env file for connecting to a ScyllaDB Cloud cluster DC.
+#
+#   ./gen_cluster_env.bash <cluster_id> [dc_name|dc_id] [-o outfile]
+#
+# Emits USERNAME / PASSWORD / DC / NODES / HOSTS, e.g.
+#
+#   export USERNAME='scylla_admin'
+#   export PASSWORD='...'
+#   export DC='GCE_US_WEST_1'
+#   export NODES=("node-0.gce-us-west-1.<hash>.clusters.scylla.cloud" ...)
+#   printf -v HOSTS '%s ' "${NODES[@]}"
+#   export HOSTS
+#
+# Source it with: . cluster-<id>.env
+#
+# Two sources, each used for what it alone is authoritative about:
+#
+#   REST  GET /account/<acct>/cluster/<id>        -> dataCenters[].name, .id
+#         GET /account/<acct>/cluster/<id>/nodes  -> nodes[].dns, .dcId
+#         The DC name is read, not derived from the node hostname: a second DC
+#         in the same region is named GCE_US_CENTRAL_1_2, which no hostname
+#         transform would produce.
+#
+#   cx describe cluster -c <id>  -> the "== CQL ==" section, the only place
+#         the plaintext CQL password appears. (Not 'cx sc cluster describe
+#         --cluster-id', which reports it as a SecretsManager key, and not the
+#         REST API, which does not expose it at all.)
+#
+# Needs SC_TOKEN and SC_ACCOUNT for the REST calls, and cx auth for the
+# password. The file holds a password, so it is written mode 600.
+
+API_BASE_URL="https://api.cloud.scylladb.com"
+API_TOKEN=${SC_TOKEN}
+accountId=${SC_ACCOUNT}
+
+usage() {
+    echo "Usage: $0 cluster_id [dc_name|dc_id] [-o outfile]"
+    echo "  dc      defaults to the lowest DC id on the cluster"
+    echo "  -o      output file (default: cluster-<cluster_id>.env)"
+    exit 1
+}
+
+[[ "$1" == '' || "$1" == -h || "$1" == --help ]] && usage
+
+CLUSTER_ID=$1; shift
+DC_WANTED=
+OUTFILE=
+
+while (($# > 0)); do
+    case $1 in
+        -o) OUTFILE=$2; shift 2 ;;
+        *)  if [[ -z $DC_WANTED ]]; then DC_WANTED=$1; shift
+            else echo "Unexpected argument: $1" >&2; usage
+            fi ;;
+    esac
+done
+
+[[ $CLUSTER_ID =~ ^[0-9]+$ ]] || { echo "error: cluster_id must be numeric" >&2; usage; }
+[[ -n $API_TOKEN  ]] || { echo "error: SC_TOKEN is not set" >&2; exit 1; }
+[[ -n $accountId  ]] || { echo "error: SC_ACCOUNT is not set" >&2; exit 1; }
+OUTFILE=${OUTFILE:-cluster-${CLUSTER_ID}.env}
+
+# ---- REST: cluster + nodes -------------------------------------------------
+CLUSTER=$(curl -s -X GET "${API_BASE_URL}/account/${accountId}/cluster/${CLUSTER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}")
+NODES_JSON=$(curl -s -X GET "${API_BASE_URL}/account/${accountId}/cluster/${CLUSTER_ID}/nodes" \
+  -H "Authorization: Bearer ${API_TOKEN}")
+
+if [[ $(jq -r '.data.cluster.id // empty' <<<"$CLUSTER") != "$CLUSTER_ID" ]];then
+    echo "error: could not read cluster ${CLUSTER_ID}" >&2
+    jq -c . <<<"$CLUSTER" >&2
+    exit 1
+fi
+
+CLUSTER_NAME=$(jq -r '.data.cluster.clusterName // "?"' <<<"$CLUSTER")
+
+# Pick the DC by name, by id, or default to the lowest DC id -- numerically,
+# which is the cluster's original DC. The API returns them in neither id nor
+# name order, so sort explicitly.
+DC_JSON=$(jq -c --arg want "$DC_WANTED" '
+  (.data.cluster.dataCenters // []) as $dcs
+  | if $want == "" then ($dcs | sort_by(.id) | .[0])
+    else ($dcs[] | select((.name == $want) or ((.id|tostring) == $want)))
+    end' <<<"$CLUSTER")
+
+if [[ -z $DC_JSON || $DC_JSON == null ]];then
+    echo "error: no such DC '${DC_WANTED}' on cluster ${CLUSTER_ID}" >&2
+    echo "available:" >&2
+    jq -r '(.data.cluster.dataCenters // [])[] | "  \(.id)  \(.name)"' <<<"$CLUSTER" >&2
+    exit 1
+fi
+
+DC_ID=$(jq -r .id <<<"$DC_JSON")
+DC_NAME=$(jq -r .name <<<"$DC_JSON")
+DC_STATUS=$(jq -r .status <<<"$DC_JSON")
+
+mapfile -t NODE_DNS < <(jq -r --argjson dc "$DC_ID" \
+  '(.data.nodes // [])[] | select(.dcId == $dc and .dns != null) | .dns' <<<"$NODES_JSON" | sort)
+
+if ((${#NODE_DNS[@]} == 0));then
+    echo "error: no node DNS names for DC ${DC_ID} (${DC_NAME}, ${DC_STATUS})" >&2
+    echo "       nodes may still be provisioning, or the cluster has no DNS" >&2
+    exit 1
+fi
+
+# ---- cx: the CQL credentials -----------------------------------------------
+# == CQL ==
+# scylla_cql_username    scylla_cql_password
+# ---------------------  ---------------------
+# scylla_admin           4bpivYSfRJLX8a3
+read -r USERNAME PASSWORD < <(cx describe cluster -c "$CLUSTER_ID" 2>&1 \
+  | grep -vE '^\{"level"' \
+  | awk '
+      /^== CQL ==/     {sec=1; next}
+      sec && /^-----/  {rule=1; next}
+      rule && NF >= 2  {print $1, $2; exit}
+    ')
+
+if [[ -z $USERNAME || -z $PASSWORD ]];then
+    echo "error: could not read the CQL username/password from" >&2
+    echo "       cx describe cluster -c ${CLUSTER_ID}  ('== CQL ==' section)" >&2
+    exit 1
+fi
+
+# Single-quote for the shell: ' becomes '\''
+q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+
+{
+  printf '# %s -- cluster %s (%s), DC %s (%s)\n' \
+    "$OUTFILE" "$CLUSTER_ID" "$CLUSTER_NAME" "$DC_NAME" "$DC_ID"
+  printf '# generated by %s\n' "$(basename "$0")"
+  printf 'export USERNAME=%s\n' "$(q "$USERNAME")"
+  printf 'export PASSWORD=%s\n' "$(q "$PASSWORD")"
+  printf 'export DC=%s\n' "$(q "$DC_NAME")"
+  printf 'export NODES=('
+  for i in "${!NODE_DNS[@]}"; do
+      ((i > 0)) && printf ' '
+      printf '"%s"' "${NODE_DNS[$i]}"
+  done
+  printf ')\n'
+  printf '# printf -v HOSTS %s%s%s "${NODES[0]/,/}, ${NODES[1]/,/}, ${NODES[2]/,/}"\n' "'%s '"
+  printf 'printf -v HOST %s "${NODES[0]}"\n' "'%s '"
+  printf 'export HOST\n'
+} > "$OUTFILE"
+
+chmod 600 "$OUTFILE"
+
+printf 'wrote %s\n' "$OUTFILE"
+printf '  cluster: %s %s  dc: %s (%s, %s)  user: %s  nodes: %s\n' \
+  "$CLUSTER_ID" "$CLUSTER_NAME" "$DC_NAME" "$DC_ID" "$DC_STATUS" "$USERNAME" "${#NODE_DNS[@]}"
+printf '  source it with: . %s\n' "$OUTFILE"
