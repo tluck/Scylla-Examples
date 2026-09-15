@@ -11,10 +11,12 @@ from datetime import datetime, timezone
 API_BASE_URL = "https://api.cloud.scylladb.com"
 API_TOKEN = os.getenv('SC_TOKEN')
 accountId = os.getenv('SC_ACCOUNT')
-default_version="2026.2.5"
+default_version="2026.2.6"
 default_cidr = "172.30.0.0/24"
 default_instance_gcp = "n2-highmem-2"
 default_instance_aws = "i8g.large"
+default_family_gcp = "n2-highmem"
+default_family_aws = "i8g"
 default_region_gcp = "us-west1"
 default_region_aws = "us-west-2"
 
@@ -63,7 +65,7 @@ def build_parser():
     # delete cluster
     p_delete = subparsers.add_parser("delete", help="Delete a cluster")
     p_delete.add_argument(
-        "-x", "--delete",
+        "-c", "--cluster",
         metavar="CLUSTER_ID",
         help="Cluster ID to delete"
     )
@@ -77,11 +79,11 @@ def build_parser():
     p_create = subparsers.add_parser("create", help="Create a cluster")
 
     p_create.add_argument(
-        "-c", "--cloud",
+        "-p", "--cloud",
         type=str.lower,
         choices=["gcp", "aws"],
         required=True,
-        help="Cloud provider"
+        help="Cloud provider (-p, not -c: -c is the cluster ID everywhere else)"
     )
     p_create.add_argument(
         "-m", "--mode",
@@ -91,11 +93,47 @@ def build_parser():
         help="Deployment mode (default: xcloud)"
     )
     p_create.add_argument(
+        "-o", "--owner",
+        type=str.lower,
+        choices=["byoa", "scylla"],
+        default="byoa",
+        help="Whose cloud account hosts the cluster: 'byoa' (your own account, "
+             "owner=Account) or 'scylla' (ScyllaDB's account, owner=Scylla) "
+             "(default: byoa)"
+    )
+    p_create.add_argument(
         "-l", "--name",
         help="Cluster name (or prefix; overrides default naming)"
     )
     p_create.add_argument(
-        "-t", "--instance-type",
+        "-v", "--vcpu",
+        type=int,
+        help="Initial total vCPU minimum for the xcloud scaling policy (xcloud "
+             "mode only, default: 0). On its own it scales within the cloud's "
+             f"default instance family ({default_family_gcp} for GCP, "
+             f"{default_family_aws} for AWS); pair it with --instance-type to "
+             "pin one instance type instead, or --instance-family to pick "
+             "another family"
+    )
+    p_create.add_argument(
+        "-t", "--tib",
+        type=int,
+        help="Initial total storage minimum in TiB for the xcloud scaling "
+             "policy, sent as storage.min in GiB (xcloud mode only, default: 0)"
+    )
+    p_create.add_argument(
+        "-F", "--instance-family",
+        nargs="?",
+        const="",
+        help="Instance family (e.g. n2-highmem, n2d-highmem, z3-highmem, i8g) "
+             "to scale within, sent instead of a discrete instance type so the "
+             "API picks the sizes that meet the vCPU/storage minimums; bare -F "
+             f"uses the default for the cloud ({default_family_gcp} for GCP, "
+             f"{default_family_aws} for AWS), which is also what plain --vcpu "
+             "selects; requires --vcpu"
+    )
+    p_create.add_argument(
+        "-T", "--instance-type",
         help=f"Instance type (e.g. default {default_instance_gcp}, {default_instance_aws})"
     )
     p_create.add_argument(
@@ -287,39 +325,74 @@ def handle_create(args):
     # instance type and disk from options
     custom_instance = args.instance_type
     custom_disks = args.disk
+    # An instance family scales within a family instead of pinning one instance
+    # type, so it replaces --instance-type/--disk rather than adding to them.
+    # A bare -F (empty string) takes the default family for the cloud.
+    explicit_family = args.instance_family is not None
+    family = args.instance_family
+    if family == "":
+        family = default_family_gcp if cloud == "gcp" else default_family_aws
+    default_family = default_family_gcp if cloud == "gcp" else default_family_aws
+
+    if mode != "xcloud" and (args.vcpu is not None or args.tib is not None or explicit_family):
+        print("ERROR: --vcpu/--tib/--instance-family set the xcloud scaling "
+              "policy and cannot be used with --mode standard")
+        sys.exit(1)
+    if explicit_family and custom_instance:
+        print("ERROR: --instance-family and --instance-type are mutually exclusive")
+        sys.exit(1)
+    if explicit_family and args.vcpu is None:
+        print("ERROR: --instance-family requires --vcpu; without a vCPU minimum "
+              "the API has nothing to size the family against")
+        sys.exit(1)
+
+    # A vCPU minimum with nothing pinning a specific instance (--instance-type
+    # or its GCP --disk count) scales within the cloud's default family, so -F
+    # only has to be spelled out to pick a different family.
+    if family is None and args.vcpu is not None and not custom_instance and custom_disks is None:
+        family = default_family
+        print(f"No --instance-type given; scaling within default instance "
+              f"family '{family}'")
 
     # choose defaults per cloud
     if cloud == "gcp":
-        instanceType = custom_instance if custom_instance else default_instance_gcp
-        localDiskCount = custom_disks if custom_disks is not None else 1
+        instanceType = None if family else (custom_instance if custom_instance else default_instance_gcp)
+        localDiskCount = None if family else (custom_disks if custom_disks is not None else 1)
         region = args.region if args.region else default_region_gcp
         # name construction: use provided name if given, otherwise default pattern
         if args.name:
             name = args.name
+        elif family:
+            name = f"tjl-gcp-{family}"
         else:
             name = f"tjl-gcp-{instanceType}-{localDiskCount}"
         cloudProviderId = 2
     else:
-        instanceType = custom_instance if custom_instance else default_instance_aws
-        localDiskCount = custom_disks  # For AWS, keep None if not specified
+        instanceType = None if family else (custom_instance if custom_instance else default_instance_aws)
+        localDiskCount = None if family else custom_disks  # For AWS, keep None if not specified
         region = args.region if args.region else default_region_aws
         if args.name:
             name = args.name
+        elif family:
+            name = f"tjl-aws-{family}"
         else:
             name = f"tjl-aws-{instanceType}"
         cloudProviderId = 1
 
     name = name.replace('.', '-')
-    owner = "Account"
+    owner = "Scylla" if args.owner == "scylla" else "Account"
     cidr = args.cidr if args.cidr else default_cidr
     replication = args.replication if args.replication else 3
     scylla_version = args.scylla_version if args.scylla_version else default_version
 
-    print(f"Creating cluster '{name}' with instance type: {instanceType}", end="")
-    if localDiskCount is not None:
-        print(f" and {localDiskCount} disks")
+    if family:
+        print(f"Creating cluster '{name}' with instance family: {family}")
     else:
-        print()
+        print(f"Creating cluster '{name}' with instance type: {instanceType}", end="")
+        if localDiskCount is not None:
+            print(f" and {localDiskCount} disks")
+        else:
+            print()
 
     # Get cloudCredentialId (highest id if several match owner + cloud provider)
     cloud_accounts = api_get(f"{API_BASE_URL}/account/{accountId}/cloud-account")
@@ -328,7 +401,7 @@ def handle_create(args):
         if x.get('owner') == owner and x.get('cloudProviderId') == cloudProviderId
     ]
     cloudCredentialId = max((x['id'] for x in matches), default=None)
-    print(f"Cloud Credential ID: {cloudCredentialId}")
+    print(f"Cloud Credential ID: {cloudCredentialId} (owner: {owner})")
 
     # Get regionId
     regions = api_get(f"{API_BASE_URL}/deployment/cloud-provider/{cloudProviderId}/regions")
@@ -339,9 +412,20 @@ def handle_create(args):
     )
     print(f"Region ID: {regionId}")
 
-    # Get instanceId
+    # Get instanceId (or validate the family, which is sent by name, not by ID)
     instances = api_get(f"{API_BASE_URL}/deployment/cloud-provider/{cloudProviderId}/region/{regionId}")
-    if cloud == "gcp" and localDiskCount is not None:
+    if family:
+        available = sorted({i.get('instanceFamily') for i in
+                            instances.get('data', {}).get('instances', [])
+                            if i.get('instanceFamily')})
+        if family not in available:
+            print(f"ERROR: Could not find instance family '{family}' in {region}")
+            print("\nAvailable instance families:")
+            for f in available:
+                print(f"  {f}")
+            sys.exit(1)
+        instanceId = None
+    elif cloud == "gcp" and localDiskCount is not None:
         instanceId = next(
             (i['id'] for i in instances.get('data', {}).get('instances', [])
              if i.get('externalId') == instanceType and i.get('localDiskCount') == localDiskCount),
@@ -354,7 +438,7 @@ def handle_create(args):
             None
         )
 
-    if instanceId is None:
+    if not family and instanceId is None:
         print(f"ERROR: Could not find instance type '{instanceType}'", end="")
         if localDiskCount is not None:
             print(f" with {localDiskCount} disks")
@@ -368,7 +452,8 @@ def handle_create(args):
                 print(f"  {i.get('externalId')}")
         sys.exit(1)
 
-    print(f"Instance ID: {instanceId}")
+    if not family:
+        print(f"Instance ID: {instanceId}")
 
     # Build payload
     base_json = {
@@ -393,14 +478,23 @@ def handle_create(args):
             "instanceId": instanceId
         })
     else:
-        base_json["scaling"] = {
+        # The API docs say GB, but the values are GiB: they are compared against
+        # the instance totalStorage field, and a GCP local SSD reported there as
+        # 375 is a 375 GiB disk. So a TiB argument converts with 1024, not 1000.
+        storage_min = args.tib * 1024 if args.tib is not None else 0
+        scaling = {
             "mode": "xcloud",
-            "instanceTypeIDs": [instanceId],
             "policies": {
-                "storage": {"min": 0, "targetUtilization": 0.8},
-                "vcpu": {"min": 0}
+                "storage": {"min": storage_min, "targetUtilization": 0.8},
+                "vcpu": {"min": args.vcpu if args.vcpu is not None else 0}
             }
         }
+        # The API requires exactly one of instanceTypeIDs or instanceFamilies.
+        if family:
+            scaling["instanceFamilies"] = [family]
+        else:
+            scaling["instanceTypeIDs"] = [instanceId]
+        base_json["scaling"] = scaling
 
     print(json.dumps(base_json, indent=2))
 
@@ -838,7 +932,7 @@ def main():
     elif args.command == "show":
         handle_show(args.cluster)
     elif args.command == "delete":
-        handle_delete(args.delete, args.cluster_name)
+        handle_delete(args.cluster, args.cluster_name)
     elif args.command == "create":
         handle_create(args)
     elif args.command == "scale":
