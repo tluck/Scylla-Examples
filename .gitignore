@@ -37,3 +37,15 @@ override.tf.json
 terraform.rc
 /python_sample_app/sample_app/.ruff_cache
 /python_sample_app/sample_app/__pycache__
+
+# Generated cluster credential files (contain DB usernames/passwords)
+*.env
+sc_api/cluster-*.env
+
+# Python build artifacts
+__pycache__/
+*.py[cod]
+.ruff_cache/
+
+# macOS
+.DS_Store
