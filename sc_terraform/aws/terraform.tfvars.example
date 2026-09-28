@@ -1,0 +1,40 @@
+# Copy to terraform.tfvars and fill in your own values.
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# The API token is NOT set here. Export it before running terraform:
+#   export SCYLLADB_CLOUD_TOKEN="<your token>"
+# (or: source ../env.sh)
+
+cluster_name = "scylla-demo"
+region       = "us-east-1"
+
+# Where the cluster is deployed:
+#   null      -> ScyllaDB Cloud's own AWS account (no setup needed)
+#   <number>  -> your own AWS account (BYOA), configured in the ScyllaDB Cloud
+#                portal first. Find the ID with:
+#                  curl -s -H "Authorization: Bearer $SCYLLADB_CLOUD_TOKEN" \
+#                    https://api.cloud.scylladb.com/account/<accountId>/cloud-account
+byoa_id = null
+
+# Cluster VPC CIDR. Must not overlap with the client network you peer to,
+# and must not collide with a route already present in that network.
+cluster_vpc_cidr = "172.28.0.0/24"
+
+# Client connectivity: vpc_peering | transit_gateway | none
+connection_type = "vpc_peering"
+
+# vpc_peering: peer to this account's default VPC, or build a dedicated
+# client VPC (use_default_vpc = false, the default).
+use_default_vpc = false
+client_vpc_cidr    = "10.100.0.0/16"
+client_subnet_cidr = "10.100.1.0/24"
+
+# transit_gateway only
+# tgw_id      = "tgw-0123456789abcdef0"
+# tgw_ram_arn = "arn:aws:ram:us-east-1:123456789012:resource-share/EXAMPLE"
+
+# X Cloud autoscaling policy
+xcloud_instance_families          = ["i8g"]
+xcloud_storage_min_gb             = 500
+xcloud_storage_target_utilization = 0.8
+xcloud_vcpu_min                   = 6

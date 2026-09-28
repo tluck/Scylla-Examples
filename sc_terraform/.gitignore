@@ -1,0 +1,27 @@
+# Terraform state - contains cluster IDs, IPs and CA certs. Never commit.
+*.tfstate
+*.tfstate.*
+terraform.tfstate.d/
+crash.log
+crash.*.log
+
+# Provider plugins and lock-adjacent working dirs
+.terraform/
+.terraform.tfstate.lock.info
+
+# Real variable files hold account IDs and credential IDs.
+# Committed templates live alongside as *.tfvars.example.
+*.tfvars
+!*.tfvars.example
+*.auto.tfvars
+
+# Saved plans may embed variable values
+*.tfplan
+
+# Local overrides
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc

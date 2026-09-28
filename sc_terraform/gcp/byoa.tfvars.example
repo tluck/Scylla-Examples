@@ -1,0 +1,12 @@
+# Optional: a second configuration deploying into your own GCP project (BYOA),
+# kept in a separate workspace so both can exist side by side.
+#
+#   terraform workspace select -or-create byoa
+#   terraform apply -var-file=byoa.tfvars
+#
+# Give it a CIDR distinct from your other clusters if they peer to the same
+# client network - one route table cannot hold two routes for the same prefix.
+
+cluster_name     = "scylla-demo-byoa"
+byoa_id          = 12345 # your credential ID; see terraform.tfvars.example
+cluster_vpc_cidr = "172.27.0.0/24"
