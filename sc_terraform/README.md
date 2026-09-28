@@ -152,6 +152,62 @@ The GCP example always builds an auto-mode client VPC and a two-sided peering:
 `google_compute_network_peering` on yours. GCP exchanges routes automatically,
 so no route resources are needed.
 
+## clusters.sh — all four permutations in one command
+
+`clusters.sh` drives both examples across the four permutations
+(AWS/GCP x ScyllaDB-owned/BYOA), each in its own Terraform workspace.
+
+```bash
+cp config.env.example config.env    # then edit it
+./clusters.sh plan                  # plan all four
+./clusters.sh apply                 # create all four, in parallel
+./clusters.sh apply -p aws          # both AWS permutations
+./clusters.sh apply -o byoa         # both BYOA permutations
+./clusters.sh apply -p aws -o byoa  # exactly one
+./clusters.sh status                # what each workspace tracks
+./clusters.sh output -p gcp         # the GCP clusters' outputs
+./clusters.sh destroy               # tear them all down
+```
+
+Selection uses the same two axes as
+[`sc_api/scylladb_cloud_cli.py`](../sc_api/scylladb_cloud_cli.py) — `-p/--cloud`
+(`aws`|`gcp`) and `-o/--owner` (`byoa`|`scylla`). Where the CLI creates one
+cluster and requires both, here each axis is a **filter**: omit it and both
+values are included, so no flags at all means all four permutations.
+
+These per-run overrides match the CLI's spelling too, and otherwise fall back
+to `config.env`:
+
+| Flag | Meaning |
+|---|---|
+| `-l, --name` | cluster name prefix |
+| `-r, --region` | region for the selected cloud |
+| `-v, --vcpu` | X Cloud vCPU minimum |
+| `-t, --tib` | X Cloud storage minimum, in **TiB** (config.env uses GB) |
+| `-F, --instance-family` | family to scale within |
+| `-i, --cidr` | cluster VPC CIDR; needs a single target |
+
+Also `-S`/`--serial` to run one at a time, `-y`/`--yes` to skip the
+confirmation prompt, and `-h` for help. These have no CLI counterpart — the CLI
+creates one cluster per invocation, so parallelism never comes up there.
+
+Configuration comes from `config.env` (gitignored) or plain environment
+variables — token, regions, cluster prefix, BYOA credential IDs, GCP project,
+the X Cloud policy and per-cluster CIDRs. `config.env.example` documents each
+one and includes the API calls for looking up your BYOA IDs and the instance
+families available in a region.
+
+The script checks prerequisites before doing anything, so a missing token,
+BYOA ID or GCP project fails immediately with a clear message rather than
+part-way through an apply. Per-run logs and the generated variable files land
+in `.logs/`.
+
+> It writes a JSON tfvars file per permutation rather than passing `-var`
+> flags. That is deliberate: an explicit `-var-file` outranks the auto-loaded
+> `terraform.tfvars`, so a `byoa_id` left in there cannot leak into the
+> ScyllaDB-owned permutations, and JSON can express a real `null`
+> (`-var byoa_id=null` passes the *string* `"null"`, which is not a number).
+
 ## Running several clusters side by side
 
 Each directory holds a single cluster resource, so use workspaces to keep

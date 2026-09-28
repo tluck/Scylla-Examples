@@ -25,3 +25,7 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
+
+# clusters.sh local config (may contain the API token)
+config.env
+.logs/
