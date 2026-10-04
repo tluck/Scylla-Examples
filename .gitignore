@@ -35,8 +35,6 @@ override.tf.json
 # Ignore CLI configuration files
 .terraformrc
 terraform.rc
-/python_sample_app/sample_app/.ruff_cache
-/python_sample_app/sample_app/__pycache__
 
 # Generated cluster credential files (contain DB usernames/passwords)
 *.env
@@ -49,3 +47,7 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# Java/Maven build output (was excluded by the old rsync via *.jar)
+*.jar
+target/
