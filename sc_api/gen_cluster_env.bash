@@ -2,60 +2,77 @@
 
 # Generate a shell env file for connecting to a ScyllaDB Cloud cluster DC.
 #
+#   ./gen_cluster_env.bash -c <cluster_id> [dc_name|dc_id] [-o outfile]
 #   ./gen_cluster_env.bash <cluster_id> [dc_name|dc_id] [-o outfile]
 #
-# Emits USERNAME / PASSWORD / DC / NODES / HOSTS, e.g.
+# Emits USERNAME / PASSWORD / DC / CONTACT_POINTS, e.g.
 #
-#   export USERNAME='scylla_admin'
+#   export USERNAME='scylla'
 #   export PASSWORD='...'
 #   export DC='GCE_US_WEST_1'
-#   export NODES=("node-0.gce-us-west-1.<hash>.clusters.scylla.cloud" ...)
-#   printf -v HOSTS '%s ' "${NODES[@]}"
-#   export HOSTS
+#   export CONTACT_POINTS='node-0.gce-us-west-1.<hash>.clusters.scylla.cloud,node-1...'
 #
 # Source it with: . cluster-<id>.env
 #
-# Two sources, each used for what it alone is authoritative about:
+# CONTACT_POINTS is comma-separated -- the -s/--hosts format every sample app
+# takes, and what they fall back to when -s is not given. (A bash array cannot
+# be exported, so a list would not reach a child process.) For an array in an
+# interactive shell: IFS=, read -ra NODES <<<"$CONTACT_POINTS"
 #
-#   REST  GET /account/<acct>/cluster/<id>        -> dataCenters[].name, .id
-#         GET /account/<acct>/cluster/<id>/nodes  -> nodes[].dns, .dcId
-#         The DC name is read, not derived from the node hostname: a second DC
-#         in the same region is named GCE_US_CENTRAL_1_2, which no hostname
-#         transform would produce.
+# Everything comes from the ScyllaDB Cloud REST API:
 #
-#   cx describe cluster -c <id>  -> the "== CQL ==" section, the only place
-#         the plaintext CQL password appears. (Not 'cx sc cluster describe
-#         --cluster-id', which reports it as a SecretsManager key, and not the
-#         REST API, which does not expose it at all.)
+#   GET /account/<acct>/cluster/<id>                 -> dataCenters[].name, .id
+#   GET /account/<acct>/cluster/<id>/nodes           -> nodes[].dns, .dcId
+#   GET /account/<acct>/cluster/connect?clusterId=<id>
+#                                                    -> credentials.username,
+#                                                       .password
+#   The DC name is read, not derived from the node hostname: a second DC in
+#   the same region is named GCE_US_CENTRAL_1_2, which no hostname transform
+#   would produce. The connect endpoint is what the portal's Connect tab and
+#   the Terraform scylladbcloud_cql_auth data source use; it returns the
+#   customer CQL user, not the internal role 'cx describe cluster' shows.
 #
-# Needs SC_TOKEN and SC_ACCOUNT for the REST calls, and cx auth for the
-# password. The file holds a password, so it is written mode 600.
+# Needs SC_TOKEN and SC_ACCOUNT. The file holds a password, so it is written
+# mode 600.
 
 API_BASE_URL="https://api.cloud.scylladb.com"
 API_TOKEN=${SC_TOKEN}
 accountId=${SC_ACCOUNT}
 
 usage() {
-    echo "Usage: $0 cluster_id [dc_name|dc_id] [-o outfile]"
-    echo "  dc      defaults to the lowest DC id on the cluster"
-    echo "  -o      output file (default: cluster-<cluster_id>.env)"
+    echo "Usage: $0 -c cluster_id [dc_name|dc_id] [-o outfile]"
+    echo "       $0 cluster_id [dc_name|dc_id] [-o outfile]"
+    echo "  -c, --cluster  cluster ID (or give it as the first positional argument)"
+    echo "  dc             defaults to the lowest DC id on the cluster"
+    echo "  -o             output file (default: cluster-<cluster_id>.env)"
     exit 1
 }
 
-[[ "$1" == '' || "$1" == -h || "$1" == --help ]] && usage
+[[ "$1" == '' ]] && usage
 
-CLUSTER_ID=$1; shift
+CLUSTER_ID=
 DC_WANTED=
 OUTFILE=
 
+# Positional arguments are cluster_id then dc, or just dc when -c gives the cluster
+POSITIONAL=()
 while (($# > 0)); do
     case $1 in
-        -o) OUTFILE=$2; shift 2 ;;
-        *)  if [[ -z $DC_WANTED ]]; then DC_WANTED=$1; shift
-            else echo "Unexpected argument: $1" >&2; usage
-            fi ;;
+        -h|--help) usage ;;
+        -c|--cluster) [[ -n $2 ]] || { echo "error: $1 requires a cluster ID" >&2; usage; }
+                      CLUSTER_ID=$2; shift 2 ;;
+        -o) [[ -n $2 ]] || { echo "error: -o requires a file name" >&2; usage; }
+            OUTFILE=$2; shift 2 ;;
+        -*) echo "Unknown option: $1" >&2; usage ;;
+        *)  POSITIONAL+=("$1"); shift ;;
     esac
 done
+
+[[ -z $CLUSTER_ID ]] && { CLUSTER_ID=${POSITIONAL[0]}; POSITIONAL=("${POSITIONAL[@]:1}"); }
+DC_WANTED=${POSITIONAL[0]}
+((${#POSITIONAL[@]} > 1)) && { echo "Unexpected argument: ${POSITIONAL[1]}" >&2; usage; }
+
+[[ -n $CLUSTER_ID ]] || { echo "error: cluster_id is required" >&2; usage; }
 
 [[ $CLUSTER_ID =~ ^[0-9]+$ ]] || { echo "error: cluster_id must be numeric" >&2; usage; }
 [[ -n $API_TOKEN  ]] || { echo "error: SC_TOKEN is not set" >&2; exit 1; }
@@ -105,22 +122,17 @@ if ((${#NODE_DNS[@]} == 0));then
     exit 1
 fi
 
-# ---- cx: the CQL credentials -----------------------------------------------
-# == CQL ==
-# scylla_cql_username    scylla_cql_password
-# ---------------------  ---------------------
-# scylla_admin           4bpivYSfRJLX8a3
-read -r USERNAME PASSWORD < <(cx describe cluster -c "$CLUSTER_ID" 2>&1 \
-  | grep -vE '^\{"level"' \
-  | awk '
-      /^== CQL ==/     {sec=1; next}
-      sec && /^-----/  {rule=1; next}
-      rule && NF >= 2  {print $1, $2; exit}
-    ')
+# ---- REST: the CQL credentials ---------------------------------------------
+CONNECT=$(curl -s -X GET "${API_BASE_URL}/account/${accountId}/cluster/connect?clusterId=${CLUSTER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}")
+
+USERNAME=$(jq -r '.data.credentials.username // empty' <<<"$CONNECT")
+PASSWORD=$(jq -r '.data.credentials.password // empty' <<<"$CONNECT")
 
 if [[ -z $USERNAME || -z $PASSWORD ]];then
     echo "error: could not read the CQL username/password from" >&2
-    echo "       cx describe cluster -c ${CLUSTER_ID}  ('== CQL ==' section)" >&2
+    echo "       GET /account/${accountId}/cluster/connect?clusterId=${CLUSTER_ID}" >&2
+    jq -c 'del(.data.credentials)' <<<"$CONNECT" >&2
     exit 1
 fi
 
@@ -134,15 +146,7 @@ q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
   printf 'export USERNAME=%s\n' "$(q "$USERNAME")"
   printf 'export PASSWORD=%s\n' "$(q "$PASSWORD")"
   printf 'export DC=%s\n' "$(q "$DC_NAME")"
-  printf 'export NODES=('
-  for i in "${!NODE_DNS[@]}"; do
-      ((i > 0)) && printf ' '
-      printf '"%s"' "${NODE_DNS[$i]}"
-  done
-  printf ')\n'
-  printf '# printf -v HOSTS %s%s%s "${NODES[0]/,/}, ${NODES[1]/,/}, ${NODES[2]/,/}"\n' "'%s '"
-  printf 'printf -v HOST %s "${NODES[0]}"\n' "'%s '"
-  printf 'export HOST\n'
+  printf 'export CONTACT_POINTS=%s\n' "$(q "$(IFS=,; echo "${NODE_DNS[*]}")")"
 } > "$OUTFILE"
 
 chmod 600 "$OUTFILE"

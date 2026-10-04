@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import re
 import sys
 import json
 import time
@@ -11,8 +12,7 @@ from datetime import datetime, timezone
 API_BASE_URL = "https://api.cloud.scylladb.com"
 API_TOKEN = os.getenv('SC_TOKEN')
 accountId = os.getenv('SC_ACCOUNT')
-default_version="2026.2.6"
-default_cidr = "172.30.0.0/24"
+default_cidr = "172.30.1.0/24"
 default_instance_gcp = "n2-highmem-2"
 default_instance_aws = "i8g.large"
 default_family_gcp = "n2-highmem"
@@ -162,7 +162,17 @@ def build_parser():
     )
     p_create.add_argument(
         "-s", "--scylla-version",
-        help=f"Scylla version (default: {default_version})"
+        help="Scylla version (default: latest)"
+    )
+    p_create.add_argument(
+        "-e", "--encryption",
+        nargs="?",
+        const="",
+        metavar="KEY_ID",
+        help="Enable encryption at rest: bare -e uses a ScyllaDB-managed key; "
+             "-e KEY_ID uses a customer-managed key (BYOK) created beforehand "
+             "in the ScyllaDB Cloud portal, e.g. key-deadbeef "
+             "(default: not sent, so the account default applies)"
     )
     p_create.add_argument(
         "--interval",
@@ -341,6 +351,10 @@ def handle_create(args):
     if explicit_family and custom_instance:
         print("ERROR: --instance-family and --instance-type are mutually exclusive")
         sys.exit(1)
+    if args.encryption and not re.fullmatch(r"key-[a-zA-Z0-9]+", args.encryption):
+        print(f"ERROR: invalid --encryption key ID '{args.encryption}'; expected "
+              "a portal key ID such as key-deadbeef")
+        sys.exit(1)
     if explicit_family and args.vcpu is None:
         print("ERROR: --instance-family requires --vcpu; without a vCPU minimum "
               "the API has nothing to size the family against")
@@ -383,7 +397,6 @@ def handle_create(args):
     owner = "Scylla" if args.owner == "scylla" else "Account"
     cidr = args.cidr if args.cidr else default_cidr
     replication = args.replication if args.replication else 3
-    scylla_version = args.scylla_version if args.scylla_version else default_version
 
     if family:
         print(f"Creating cluster '{name}' with instance family: {family}")
@@ -465,11 +478,20 @@ def handle_create(args):
         "regionId": regionId,
         "clusterName": name,
         "replicationFactor": replication,
-        "scyllaVersion": scylla_version,
         "userApiInterface": "CQL",
         "tablets": "enforced",
         "freeTier": False
     }
+
+    if args.scylla_version:
+        base_json["scyllaVersion"] = args.scylla_version
+
+    # Encryption at rest: the provider is "scylla-<cloud>" for a ScyllaDB-managed
+    # key, or just "<cloud>" with a keyId for a customer-managed key (BYOK).
+    if args.encryption == "":
+        base_json["encryptionAtRest"] = {"provider": f"scylla-{cloud}"}
+    elif args.encryption:
+        base_json["encryptionAtRest"] = {"provider": cloud, "keyId": args.encryption}
 
     if mode == "standard":
         numberOfNodes = args.nodes if args.nodes else 3
