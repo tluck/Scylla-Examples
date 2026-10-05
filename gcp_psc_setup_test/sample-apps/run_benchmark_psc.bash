@@ -8,7 +8,7 @@
 
 connection_id=${1:-1}
 
-SCYLLA_NODES=${SCYLLA_NODES:-endpoint.cluster-1.scylladb.com:9001}
+SCYLLA_NODES=${SCYLLA_NODES:-endpoint.cluster-1.scylladb.com:9000}
 SCYLLA_USER=${SCYLLA_USER:-scylla}
 : "${SCYLLA_PASSWORD:?set SCYLLA_PASSWORD before running}"
 

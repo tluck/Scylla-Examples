@@ -2,24 +2,41 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"time"
+
 	"github.com/gocql/gocql"
 )
 
+// getenv returns the value of the environment variable key, or def if unset.
+func getenv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
 func main() {
-	// The DNS name provided in your ScyllaDB Cloud PrivateLink tab
-	endpoint := "endpoint.cluster-1.scylladb.com" // Example endpoint, replace with your actual endpoint
-	connectionID := "1" // your-connection-id-here
+	// Settings come from the same environment variables as sample_python_psc.py
+	// (see run_psc_go.bash). The DNS name is the one provided in your
+	// ScyllaDB Cloud PrivateLink tab.
+	endpoint := getenv("SCYLLA_PSC_DNS", "endpoint.cluster-1.scylladb.com")
+	connectionID := getenv("SCYLLA_PSC_CONN_ID", "1")
+	port, err := strconv.Atoi(getenv("SCYLLA_PSC_PORT", "9000"))
+	if err != nil {
+		panic(fmt.Sprintf("Invalid SCYLLA_PSC_PORT: %v", err))
+	}
+	password := os.Getenv("SCYLLA_PASSWORD")
+	if password == "" {
+		panic("SCYLLA_PASSWORD is not set")
+	}
 
 	cluster := gocql.NewCluster(endpoint)
 	cluster.Authenticator = gocql.PasswordAuthenticator{
-		Username: "scylla",    // Default Scylla superuser
-		Password: "lbjH51uGVMI9cLZ",    // Default password
+		Username: getenv("SCYLLA_USER", "scylla"),
+		Password: password,
 	}
-	// cluster.Authenticator = gocql.PasswordAuthenticator{
-	// 	Username: os.Getenv("SCYLLA_USERNAME"),
-	// 	Password: os.Getenv("SCYLLA_PASSWORD"),
-	// }	
 
 	// Apply the PrivateLink routing configuration
 	cluster.WithOptions(
@@ -33,7 +50,7 @@ func main() {
 	)
 
 	// Standard cluster tuning
-	cluster.Port = 9001
+	cluster.Port = port
 	cluster.Timeout = 5 * time.Second
 	cluster.PoolConfig.HostSelectionPolicy = gocql.TokenAwareHostPolicy(gocql.RoundRobinHostPolicy())
 
@@ -55,4 +72,3 @@ func main() {
 		panic("Query error: " + err.Error())
 	}
 }
-
