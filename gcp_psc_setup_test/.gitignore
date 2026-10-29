@@ -1,3 +1,7 @@
 # generated per cluster/connection by psc_generate_client.bash
 psc_[0-9]*/
 ca-*.pem
+
+# old versions of the setup scripts, kept locally only
+v0_manual/
+v1_psc/
