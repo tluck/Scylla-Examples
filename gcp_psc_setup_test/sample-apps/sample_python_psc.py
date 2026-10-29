@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import os
+import ssl
 import uuid
 
 from cassandra import ConsistencyLevel
@@ -53,6 +54,16 @@ def parse_args(argv=None):
              "(default: %(default).0shidden)",
     )
     parser.add_argument(
+        "--ca-file", default=os.environ.get("SCYLLA_CA_FILE", ""),
+        help="Cluster CA certificate (PEM); enables TLS, required by a TLS PSC connection "
+             "[env: SCYLLA_CA_FILE]",
+    )
+    parser.add_argument(
+        "--tls-name", default=os.environ.get("SCYLLA_TLS_NAME", ""),
+        help="Cluster TLS name, sent as SNI. The driver cannot verify it while client routes "
+             "are on, so only the CA chain is checked [env: SCYLLA_TLS_NAME]",
+    )
+    parser.add_argument(
         "--dc", default=os.environ.get("SCYLLA_DC", ""),
         help="Local datacenter; enables DC-aware routing and LOCAL_QUORUM [env: SCYLLA_DC]",
     )
@@ -96,6 +107,15 @@ def build_cluster(args):
         consistency_level=ConsistencyLevel.LOCAL_QUORUM if args.dc else ConsistencyLevel.QUORUM,
         request_timeout=args.request_timeout,
     )
+    # TLS: verify the CA chain and send the TLS name as SNI. The driver (3.29) refuses check_hostname together
+    # with client_routes_config, so the TLS name itself is not verified here (gocql can verify it)
+    tls = {}
+    if args.ca_file:
+        ssl_context = ssl.create_default_context(cafile=args.ca_file)
+        ssl_context.check_hostname = False
+        tls["ssl_context"] = ssl_context
+        if args.tls_name:
+            tls["ssl_options"] = {"server_hostname": args.tls_name}
     return Cluster(
         contact_points=[args.psc_dns],
         port=args.port,
@@ -105,6 +125,7 @@ def build_cluster(args):
             proxies=[ClientRouteProxy(conn_id) for conn_id in args.psc_conn_id.split(",")]
         ),
         protocol_version=args.protocol_version,
+        **tls,
     )
 
 
@@ -169,7 +190,8 @@ def run_example(session, table):
 def main(argv=None):
     args = parse_args(argv)
     print(f"Connection to Endpoint: {args.psc_dns} on port {args.port} "
-          f"using connection_id {args.psc_conn_id}")
+          f"using connection_id {args.psc_conn_id}"
+          + (f", TLS (CA {args.ca_file}, SNI {args.tls_name or '<none>'})" if args.ca_file else ""))
     # `with` shuts the cluster (and its sessions) down on every exit path.
     with build_cluster(args) as cluster:
         session = cluster.connect()

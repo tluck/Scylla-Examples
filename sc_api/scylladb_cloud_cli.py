@@ -175,6 +175,13 @@ def build_parser():
              "(default: not sent, so the account default applies)"
     )
     p_create.add_argument(
+        "--psc",
+        action="store_true",
+        help="Prepare the cluster for GCP Private Service Connect: set both "
+             "proxy protocol v2 listeners, plain (29042) and TLS (29142), so a "
+             "TLS PSC connection needs no config change and rolling restart later"
+    )
+    p_create.add_argument(
         "--interval",
         type=int,
         default=20,
@@ -492,6 +499,16 @@ def handle_create(args):
         base_json["encryptionAtRest"] = {"provider": f"scylla-{cloud}"}
     elif args.encryption:
         base_json["encryptionAtRest"] = {"provider": cloud, "keyId": args.encryption}
+
+    # Without this the cluster gets only the plain PPv2 listener (29042), and a
+    # PSC connection created with TLS fails until 29142 is set on every node.
+    # Swagger does not list the field, but the create accepts it under this
+    # exact name (wiki: How-to PSC + TLS + PPv2, step 1a).
+    if args.psc:
+        base_json["ProxyProtocolV2"] = {
+            "native_transport_port_proxy_protocol": 29042,
+            "native_transport_port_ssl_proxy_protocol": 29142
+        }
 
     if mode == "standard":
         numberOfNodes = args.nodes if args.nodes else 3
