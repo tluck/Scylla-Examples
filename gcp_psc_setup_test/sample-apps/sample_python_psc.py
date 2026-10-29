@@ -2,8 +2,10 @@
 import argparse
 import os
 import ssl
+import time
 import uuid
 
+import cassandra.connection
 from cassandra import ConsistencyLevel
 from cassandra.auth import PlainTextAuthProvider
 from cassandra.client_routes import ClientRouteProxy
@@ -24,6 +26,11 @@ DEFAULT_USER = "<placeholder, insert your user id here>"
 DEFAULT_PASSWORD = "<placeholder, insert your password here>"
 DEFAULT_KEYSPACE = "test_psc"
 DEFAULT_TABLE = "users"
+
+# Local ports the driver binds for shard-aware connections (its default 49152-65535 overlaps the OS ephemeral
+# range). Below 32768, a port in this range is one the driver chose for a shard.
+SHARD_PORT_LOW = 10000
+SHARD_PORT_HIGH = 20000
 
 
 def parse_args(argv=None):
@@ -62,6 +69,16 @@ def parse_args(argv=None):
         "--tls-name", default=os.environ.get("SCYLLA_TLS_NAME", ""),
         help="Cluster TLS name, sent as SNI. The driver cannot verify it while client routes "
              "are on, so only the CA chain is checked [env: SCYLLA_TLS_NAME]",
+    )
+    parser.add_argument(
+        "--shard-aware", choices=("true", "false"),
+        default=os.environ.get("SCYLLA_SHARD_AWARE", "true").lower(),
+        help="Advanced shard awareness: bind a source port per shard, which the node can only honour if "
+             "PPv2 carries the source port through PSC [env: SCYLLA_SHARD_AWARE]",
+    )
+    parser.add_argument(
+        "--pool-wait", type=float, default=float(os.environ.get("SCYLLA_POOL_WAIT", 5)),
+        help="Seconds to let the connection pools fill before the shard check [env: SCYLLA_POOL_WAIT]",
     )
     parser.add_argument(
         "--dc", default=os.environ.get("SCYLLA_DC", ""),
@@ -121,12 +138,108 @@ def build_cluster(args):
         port=args.port,
         auth_provider=PlainTextAuthProvider(args.user, args.password),
         execution_profiles={EXEC_PROFILE_DEFAULT: profile},
+        # advanced_shard_awareness: the driver binds a source port with port % shards == wanted shard and still
+        # connects to the client_routes port (tls_port for TLS), not to the advertised 19042/19142
         client_routes_config=ClientRoutesConfig(
-            proxies=[ClientRouteProxy(conn_id) for conn_id in args.psc_conn_id.split(",")]
+            proxies=[ClientRouteProxy(conn_id) for conn_id in args.psc_conn_id.split(",")],
+            advanced_shard_awareness=args.shard_aware == "true",
         ),
         protocol_version=args.protocol_version,
         **tls,
     )
+
+
+def _local_addr(conn):
+    """(ip, port) of a driver connection's socket, or None."""
+    sock = getattr(conn, "_socket", None)
+    try:
+        return sock.getsockname()[:2] if sock else None
+    except OSError:
+        return None
+
+
+def check_shard_awareness(cluster, session):
+    """
+    For every node: shard count and this session's connections as the node sees them in system.clients
+    (source address and port, shard, TLS). Our connections are found by their local (ip, port), read from the
+    driver's own pools. A shard-requested connection (source port the driver bound for a shard) that lands on
+    port % shards == shard_id shows that the node got the driver's source port through PSC (PPv2).
+    """
+    ours = {}
+    for pool in session.get_pools():
+        for conn in list(pool._connections.values()) + list(pool._excess_connections):
+            addr = _local_addr(conn)
+            if addr:
+                ours[addr] = "pool"
+    control = getattr(cluster.control_connection, "_connection", None)
+    addr = _local_addr(control) if control else None
+    if addr:
+        ours[addr] = "control"
+
+    print("\n=== Shard-awareness check (system.clients on each node) ===")
+    chosen = chosen_ok = arbitrary = arbitrary_ok = 0
+    for host in cluster.metadata.all_hosts():
+        info = host.sharding_info
+        shards = info.shards_count if info else 0
+        print(f"\nnode {host.host_id}  dc {host.datacenter}  rack {host.rack}")
+        print(f"  shards {shards}, advertised shard-aware ports "
+              f"{info.shard_aware_port if info else '-'} / {info.shard_aware_port_ssl if info else '-'} (ssl)"
+              " - not used by client routes")
+        if not shards:
+            print("  no sharding info (no connection to this node yet)")
+            continue
+        try:
+            rows = session.execute("SELECT * FROM system.clients", host=host)
+        except Exception as exc:
+            print(f"  could not read system.clients: {exc}")
+            continue
+        node_chosen = node_chosen_ok = node_arb = node_arb_ok = 0
+        reached = set()
+        for row in rows:
+            kind = ours.get((str(row.address), row.port))
+            if kind is None:
+                continue
+            ok = row.port % shards == row.shard_id
+            requested = SHARD_PORT_LOW <= row.port < SHARD_PORT_HIGH
+            if requested:
+                node_chosen += 1
+                node_chosen_ok += ok
+            else:
+                node_arb += 1
+                node_arb_ok += ok
+            reached.add(row.shard_id)
+            tls = getattr(row, "ssl_enabled", None)
+            print(f"  {row.address}:{row.port:<6} shard {row.shard_id:2d}  "
+                  f"{'port%shards ok' if ok else f'expected {row.port % shards}':14s} "
+                  f"{'shard-req' if requested else 'arbitrary':9s} {kind:7s}"
+                  + ("" if tls is None else f"  TLS {getattr(row, 'ssl_protocol', '')}" if tls else "  plain"))
+        chosen += node_chosen
+        chosen_ok += node_chosen_ok
+        arbitrary += node_arb
+        arbitrary_ok += node_arb_ok
+        print(f"  => shard-requested {node_chosen_ok}/{node_chosen} on the requested shard, "
+              f"arbitrary {node_arb_ok}/{node_arb} match, {len(reached)}/{shards} shards have a connection")
+
+    print(f"\nArbitrary-port connections matching port % shards: {arbitrary_ok}/{arbitrary} "
+          "(chance alone: about 1/shards)")
+    if chosen == 0:
+        print("RESULT: no shard-requested connections found (--shard-aware false, pool not filled yet, or the "
+              "first connection already reached every shard); try --pool-wait 15")
+    elif chosen < 10:
+        # the driver asks only for the shards the first connection missed, and a node that hands out shards in
+        # turn gets those right too, so one connection per shard cannot tell the two apart
+        print(f"RESULT: inconclusive: {chosen_ok}/{chosen} shard-requested connections on the requested shard is "
+              "too small a sample (the Python driver keeps one connection per shard, and a node that hands out "
+              "shards in turn gives the same result); use the Java sample with --pool-size 16")
+    elif chosen_ok == chosen:
+        print(f"RESULT: shard-aware routing works end to end: {chosen_ok}/{chosen} shard-requested connections "
+              "landed on the requested shard")
+    else:
+        print(f"RESULT: {chosen_ok}/{chosen} shard-requested connections on the requested shard (chance alone: "
+              "about 1/shards): the node does not place connections by the driver's source port. Requests are "
+              "still routed to the right shard's connection, but filling every shard needs extra connection "
+              "attempts")
+    print()
 
 
 def create_schema(session, ks, table, replication_factor):
@@ -191,10 +304,17 @@ def main(argv=None):
     args = parse_args(argv)
     print(f"Connection to Endpoint: {args.psc_dns} on port {args.port} "
           f"using connection_id {args.psc_conn_id}"
-          + (f", TLS (CA {args.ca_file}, SNI {args.tls_name or '<none>'})" if args.ca_file else ""))
+          + (f", TLS (CA {args.ca_file}, SNI {args.tls_name or '<none>'})" if args.ca_file else "")
+          + f", shard-aware {args.shard_aware}")
     # `with` shuts the cluster (and its sessions) down on every exit path.
+    # module-level generator, read when a shard-aware connection binds its source port
+    cassandra.connection.DefaultShardAwarePortGenerator.start_port = SHARD_PORT_LOW
+    cassandra.connection.DefaultShardAwarePortGenerator.end_port = SHARD_PORT_HIGH
     with build_cluster(args) as cluster:
         session = cluster.connect()
+        print(f"Waiting {args.pool_wait:g} s for the connection pools to fill...")
+        time.sleep(args.pool_wait)
+        check_shard_awareness(cluster, session)
         create_schema(session, args.keyspace, args.table, args.replication_factor)
         try:
             run_example(session, args.table)

@@ -245,26 +245,47 @@ cluster.SslOpts = &gocql.SslOptions{
 
 ## Sample apps
 
-In `sample-apps/` (binaries are built locally and rsynced to the VM, which may have no Go or internet access):
+In `sample-apps/`. Build the binaries locally and rsync them to the VM, which may have no Go, Maven or
+internet access.
+
+All four samples read the same `SCYLLA_*` variables through `psc_env.bash`. Per-connection values come from
+an env file:
+
+- `psc_generate_client.bash` writes `sample-apps/psc-<connection_name>.env` for each connection.
+- `PSC_ENV=<file>` picks the file. Without it, the samples use `./psc.env`.
+- A variable already set in the environment overrides the file.
+- The password never goes in a file.
+
+See `psc.env.example` for the format.
 
 ```bash
 ./build_binaries.bash linux/amd64              # bin/psc_go.* and bin/scylla-bench.*
+(cd java-psc && mvn -q package)                # java-psc/target/psc-sample.jar
 export SCYLLA_PASSWORD=...
-SCYLLA_PSC_DNS=<psc_domain> SCYLLA_PSC_CONN_ID=<client_route_id> ./run_psc_go.bash
-SCYLLA_PSC_DNS=<psc_domain> SCYLLA_PSC_CONN_ID=<client_route_id> ./run_sample_python.bash
-SCYLLA_NODES=<psc_domain>:9000 ./run_benchmark_psc.bash <client_route_id>
+
+PSC_ENV=psc-<connection_name>.env ./run_sample_go.bash
+PSC_ENV=psc-<connection_name>.env ./run_sample_python.bash
+PSC_ENV=psc-<connection_name>.env ./run_sample_java.bash
+PSC_ENV=psc-<connection_name>.env ./run_benchmark_psc.bash
 ```
 
-TLS: `sample_python_psc.py` takes `--ca-file` / `SCYLLA_CA_FILE` and `--tls-name` / `SCYLLA_TLS_NAME`:
+| Variable | Meaning |
+|---|---|
+| `SCYLLA_PSC_DNS` | PSC endpoint DNS name (required) |
+| `SCYLLA_PSC_CONN_ID` | Client route ID(s), comma-separated (required) |
+| `SCYLLA_PSC_PORT` | Discovery port, default `9000` |
+| `SCYLLA_USER` / `SCYLLA_PASSWORD` | Default to `USERNAME` / `PASSWORD` from `sc_api/cluster-<id>.env` |
+| `SCYLLA_DC` | Local datacenter, default `DC`. Required by Java |
+| `SCYLLA_CA_FILE` | Cluster CA. Setting it turns on TLS (TLS connections only) |
+| `SCYLLA_TLS_NAME` | Cluster TLS name, sent as SNI |
 
-```bash
-SCYLLA_CA_FILE=ca-<cluster_id>.pem SCYLLA_TLS_NAME=<tls_name> \
-SCYLLA_PSC_DNS=<psc_domain> SCYLLA_PSC_CONN_ID=<client_route_id> ./run_sample_python.bash
-```
+How each sample handles TLS:
 
-The Python driver (3.29.12) refuses `check_hostname=True` together with client routes, so it verifies the CA
-chain and sends the TLS name as SNI, but does not check the name. `psc_go`, `scylla-bench` and the benchmark
-are still plain only.
+| Sample | TLS behavior |
+|---|---|
+| Go (gocql) and Java | Verify the TLS name against the certificate |
+| Python (driver 3.29.12) | Verifies the CA chain and sends the TLS name as SNI, but doesn't check the name: the driver refuses `check_hostname` with client routes |
+| `scylla-bench` | Encrypts with the CA but doesn't verify the server: it has no server-name option |
 
 Verified on 54742 from `tjl-client-arm` (2026-10-28):
 
@@ -274,6 +295,45 @@ Verified on 54742 from `tjl-client-arm` (2026-10-28):
 | Python, TLS | 823 (TLS) | CRUD works |
 | Python, plain | 823 (TLS) | fails: `does not support protocol version 21` (a TLS alert read as CQL) |
 | Python, plain | 822 (plain) | CRUD works |
+
+Java (driver 4.19.2.3) with a shard-awareness check: `run_sample_java.bash`. The VM needs a JRE 11+.
+
+```bash
+PSC_ENV=psc-<tls_connection_name>.env ./run_sample_java.bash
+PSC_ENV=psc-<tls_connection_name>.env ./run_sample_java.bash --shard-aware false   # compare
+```
+
+Unlike the Python driver, the Java sample verifies the TLS name. It sends the TLS name as SNI and checks the
+certificate against it.
+
+Before the CRUD run, it reads `system.clients` on each node and prints the source port and shard of each of
+its connections. When `port % shard_count == shard_id` on every connection, shard-aware routing works end to
+end through PSC. For that, the original source port has to reach the node through Proxy Protocol v2.
+
+In client-routes mode, the driver binds a local port chosen for the shard and connects to `port` or
+`tls_port`. It never dials 19042/19142. In 4.19.2.3, `ClientRoutesConfig.withShardAwareness()` is stored
+but not read anywhere, so `advanced-shard-awareness.enabled` is the setting that takes effect.
+
+`sample_python_psc.py` runs the same check, with `--shard-aware true|false` and `--pool-wait`. It finds its own
+connections by reading their local ports from the driver's pools. The Python driver keeps one connection per
+shard, so it has no `--pool-size`.
+
+Results on 54793 from `tjl-client-arm` (2026-10-29):
+
+| Run | Shard-requested connections on the requested shard |
+|---|---|
+| Java `--pool-size 16`, TLS | 19/45 (chance) |
+| Java `--pool-size 16`, non-TLS | 21/45 (chance) |
+| Java and Python, 1 connection per shard, both TLS modes | 3/3 in every run, but inconclusive |
+
+- The nodes see the VM's own address (10.138.0.83) and the driver's source port, so PPv2 carries both through
+  PSC.
+- The node does not use that port to choose the shard on the PPv2 listeners (29042/29142), with or without TLS.
+- The small runs only looked right. The driver then asks only for the shard the first connection missed, and a
+  node that hands out shards in turn gets that right too. The samples now report fewer than 10 shard-requested
+  connections as inconclusive.
+- Requests are still routed to the right shard's connection. Only filling the pool takes extra connection
+  attempts.
 
 ## 6. Cleanup
 
@@ -307,4 +367,4 @@ gcloud compute addresses delete <prefix>-psc-ip --region us-west1 --project cx-s
 
 - cqlsh is not installed on `tjl-client-arm`; the cqlsh TLS example is untested.
 - Does the UI offer a TLS option for PSC? If it does, the TLS connection could also be created there.
-- Add TLS (CA file, ServerName, host verification) to `psc.go`. gocql can verify the TLS name on every node.
+- Test the TLS support in `psc.go` and the Java sample (`run_sample_java.bash`). Both were written after 54742 was deleted.

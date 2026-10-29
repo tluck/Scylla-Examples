@@ -1,21 +1,16 @@
 #!/usr/bin/env bash
 #
-# Credentials come from the environment - never hardcode them here, this file
-# is version controlled.
+# Runs scylla-bench through the PSC endpoint. Settings and credentials: see psc_env.bash.
 #
-#   export SCYLLA_PASSWORD='...'
-#   ./run_benchmark_psc.bash <connection_id>
+#   PSC_ENV=psc-<connection_name>.env ./run_benchmark_psc.bash [extra scylla-bench flags]
 #
+# TLS: scylla-bench has no server-name option, so it encrypts with the CA but does not verify the server.
 # Uses bin/scylla-bench.<os>-<arch> from build_binaries.bash, falling back to
 # scylla-bench on the PATH.
 
+set -euo pipefail
 cd "$(dirname "$0")"
-
-connection_id=${1:-1}
-
-SCYLLA_NODES=${SCYLLA_NODES:-endpoint.cluster-1.scylladb.com:9000}
-SCYLLA_USER=${SCYLLA_USER:-scylla}
-: "${SCYLLA_PASSWORD:?set SCYLLA_PASSWORD before running}"
+source ./psc_env.bash
 
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 case "$(uname -m)" in
@@ -29,14 +24,19 @@ if [[ ! -x "$scylla_bench" ]]; then
     { echo "no scylla-bench found - run ./build_binaries.bash ${os}/${arch} and rsync bin/" >&2; exit 1; }
 fi
 
+extra=()
+[[ -n ${SCYLLA_CA_FILE} ]] && extra+=(-tls -tls-ca-cert-file "${SCYLLA_CA_FILE}")
+[[ -n ${SCYLLA_DC} ]] && extra+=(-datacenter "${SCYLLA_DC}")
+
 set -x
 "$scylla_bench" \
   -workload uniform \
   -mode mixed \
-  -nodes "$SCYLLA_NODES" \
+  -nodes "${SCYLLA_PSC_DNS}:${SCYLLA_PSC_PORT}" \
   -username "$SCYLLA_USER" \
   -password "$SCYLLA_PASSWORD" \
   -replication-factor 3 \
   -concurrency 512 \
   -duration 300s \
-  -client-routes-connection-ids "${connection_id}"
+  -client-routes-connection-ids "${SCYLLA_PSC_CONN_ID}" \
+  ${extra[@]+"${extra[@]}"} "$@"

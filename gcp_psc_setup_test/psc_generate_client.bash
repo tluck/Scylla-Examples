@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # Consumer side of the cluster's PSC connection(s): generate terraform, create the endpoint with gcloud
-# (static IP, forwarding rule, private DNS zone + A record), and print a cqlsh example.
+# (static IP, forwarding rule, private DNS zone + A record), write sample-apps/psc-<name>.env for the sample
+# apps, and print the connect examples.
 # Without connection_name every PSC connection of the cluster is handled; each gets its own psc_<id>/ directory
 # (the generated files declare the same variables/provider, so they cannot share one terraform directory).
 #
@@ -42,6 +43,27 @@ if jq -e 'select(.data.tls==true)' <<< "${connections}" >/dev/null; then
   tls_name=$(${cx_timeout} scylla-cloud cluster describe --cluster-id ${cluster_id} 2>/dev/null \
     | tr -d '\r' | sed -n 's/^tlsname: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' | head -1)
 fi
+
+# local datacenter for the sample apps (the Java driver requires it)
+dc_name=$(api GET "/cluster/${cluster_id}" | jq -r '.data.cluster.dc.name // empty')
+
+# per-connection settings for the sample apps (sample-apps/psc_env.bash); no password, git-ignored (*.env)
+write_sample_env() {
+  local env_file=$1 domain=$2 client_route=$3 tls=$4
+  {
+    echo "# PSC connection ${name} (${connection_id}) of cluster ${cluster_id}, written by psc_generate_client.bash"
+    echo "SCYLLA_PSC_DNS=${domain}"
+    echo "SCYLLA_PSC_CONN_ID=${client_route}"
+    echo "SCYLLA_PSC_PORT=9000"
+    echo "SCYLLA_DC=${dc_name}"
+    if [[ ${tls} == "true" ]]; then
+      # relative to this file
+      echo "SCYLLA_CA_FILE=../$(basename "${ca_file}")"
+      echo "SCYLLA_TLS_NAME=${tls_name}"
+    fi
+  } > "${env_file}"
+  echo "Wrote ${env_file}"
+}
 
 # --- per connection ---
 
@@ -168,6 +190,13 @@ while read -r connection <&3; do
   echo
   echo "Ports: 9000-9002 discovery, 9003+ one node each (psc_get_connection_ids.bash ${cluster_id})"
   echo "Client route ID: ${client_route}"
+  env_name="psc-${name#psc-}.env"
+  write_sample_env "${script_dir}/sample-apps/${env_name}" ${domain} ${client_route} ${tls}
+  echo
+  echo "Sample apps (in sample-apps/, export SCYLLA_PASSWORD first):"
+  for run in run_sample_go.bash run_sample_python.bash run_sample_java.bash run_benchmark_psc.bash; do
+    echo "  PSC_ENV=${env_name} ./${run}"
+  done
   echo
   if [[ ${tls} == "true" ]]; then
     echo "TLS name (driver ServerName / host verification): ${tls_name:-<not set yet or cx unavailable>}"
@@ -182,15 +211,8 @@ while read -r connection <&3; do
     # drivers should set ServerName to the TLS name and keep host verification on
     echo "  SSL_CERTFILE=$(basename "${ca_file}") SSL_VALIDATE=true SSL_CHECK_HOSTNAME=false \\"
     echo "    cqlsh --ssl -u \$USERNAME -p \$PASSWORD --client-route ${client_route} ${domain} 9000"
-    echo
-    echo "Example (TLS), sample-apps/run_sample_python.bash (export SCYLLA_PASSWORD first):"
-    echo "  SCYLLA_CA_FILE=$(basename "${ca_file}") SCYLLA_TLS_NAME=${tls_name:-<tls_name>} \\"
-    echo "    SCYLLA_PSC_DNS=${domain} SCYLLA_PSC_CONN_ID=${client_route} ./run_sample_python.bash"
   else
     echo "Example (non-TLS), cqlsh:"
     echo "  cqlsh -u \$USERNAME -p \$PASSWORD --client-route ${client_route} ${domain} 9000"
-    echo
-    echo "Example (non-TLS), sample-apps/run_sample_python.bash (export SCYLLA_PASSWORD first):"
-    echo "  SCYLLA_PSC_DNS=${domain} SCYLLA_PSC_CONN_ID=${client_route} ./run_sample_python.bash"
   fi
 done 3<<< "${connections}"

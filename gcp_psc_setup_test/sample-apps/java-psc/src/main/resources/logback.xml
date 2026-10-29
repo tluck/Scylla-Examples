@@ -1,0 +1,13 @@
+<configuration>
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} %-5level %logger{0} - %msg%n</pattern>
+    </encoder>
+  </appender>
+  <!-- WARN shows the pool's "connected to shard X, but shard Y was requested" lines. Set to DEBUG with
+       SCYLLA_DRIVER_LOG=DEBUG to see every channel the pool opens -->
+  <logger name="com.datastax.oss.driver" level="${SCYLLA_DRIVER_LOG:-WARN}"/>
+  <root level="WARN">
+    <appender-ref ref="STDOUT"/>
+  </root>
+</configuration>

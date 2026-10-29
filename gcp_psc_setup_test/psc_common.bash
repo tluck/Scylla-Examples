@@ -5,7 +5,7 @@
 # system.client_routes ports, the generated terraform); wrap those calls in cx_timeout.
 
 api_base="https://api.cloud.scylladb.com"
-default_cluster_id=54742
+default_cluster_id=54793
 cx_timeout="timeout 120"
 
 if [[ -z ${SC_TOKEN} || -z ${SC_ACCOUNT} ]]; then
