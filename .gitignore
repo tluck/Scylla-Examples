@@ -39,6 +39,7 @@ terraform.rc
 # Generated cluster credential files (contain DB usernames/passwords)
 *.env
 sc_api/cluster-*.env
+sample_apps/env
 
 # Python build artifacts
 __pycache__/
