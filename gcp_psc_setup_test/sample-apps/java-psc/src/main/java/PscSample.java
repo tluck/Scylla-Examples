@@ -32,9 +32,10 @@ import javax.net.ssl.SSLParameters;
 import javax.net.ssl.TrustManagerFactory;
 
 /**
- * ScyllaDB Cloud PSC connectivity sample (Java driver 4.19.2.x): connects over a Private Service Connect
- * endpoint with client routes, optionally over TLS, checks shard-awareness per node, and runs a small CRUD
- * example. Java counterpart of sample_python_psc.py.
+ * ScyllaDB Cloud connectivity sample (Java driver 4.19.2.x): connects over a Private Service Connect endpoint
+ * with client routes (--mode psc) or straight to the nodes, e.g. over VPC peering (--mode direct), optionally
+ * over TLS, checks shard-awareness per node, and runs a small CRUD example. Java counterpart of
+ * sample_python_psc.py.
  *
  * <p>Every setting is a --option value or, if omitted, the environment variable SCYLLA_&lt;OPTION&gt;
  * (--psc-dns -> SCYLLA_PSC_DNS). Credentials come from the environment - never hardcode them here.
@@ -45,6 +46,9 @@ import javax.net.ssl.TrustManagerFactory;
  * original source port reaches it (Proxy Protocol v2 behind the PSC attachment). system.clients on each
  * node shows the source port the node saw and the shard that got the connection, so port % shard_count ==
  * shard_id on (nearly) every connection means shard-aware connection routing works end to end.
+ *
+ * <p>Direct mode is the control case: the driver 4.x reaches peers on the control connection's port, so the
+ * contact points use the shard-aware port (19042, 19142 with TLS) and every connection goes to it.
  */
 public class PscSample {
 
@@ -59,9 +63,11 @@ public class PscSample {
   private static final Map<String, String> DEFAULTS = new TreeMap<>();
 
   static {
+    DEFAULTS.put("mode", "");
+    DEFAULTS.put("contact-points", "");
     DEFAULTS.put("psc-dns", "");
     DEFAULTS.put("psc-conn-id", "");
-    DEFAULTS.put("port", "9000");
+    DEFAULTS.put("port", "");
     DEFAULTS.put("user", "scylla");
     DEFAULTS.put("password", "");
     DEFAULTS.put("dc", "");
@@ -80,9 +86,12 @@ public class PscSample {
   private static final Map<String, String> HELP = new HashMap<>();
 
   static {
-    HELP.put("psc-dns", "PSC endpoint DNS name (contact point and client-routes address)");
-    HELP.put("psc-conn-id", "client route ID(s), comma separated (system.client_routes.connection_id)");
-    HELP.put("port", "discovery port on the PSC endpoint (9000-9002)");
+    HELP.put("mode", "psc or direct (default: psc when a client route ID is given, else direct)");
+    HELP.put("contact-points", "direct: node addresses, comma separated");
+    HELP.put("psc-dns", "psc: PSC endpoint DNS name (contact point and client-routes address)");
+    HELP.put("psc-conn-id", "psc: client route ID(s), comma separated (system.client_routes.connection_id)");
+    HELP.put("port", "psc: discovery port 9000-9002 (default 9000); direct: default 19042/19142 shard-aware, "
+        + "9042/9142 with --shard-aware false");
     HELP.put("user", "ScyllaDB user");
     HELP.put("password", "ScyllaDB password (use the environment)");
     HELP.put("dc", "local datacenter, required by the Java driver (e.g. GCE_US_WEST_1)");
@@ -100,25 +109,39 @@ public class PscSample {
 
   public static void main(String[] argv) throws Exception {
     Map<String, String> args = parseArgs(argv);
-    String pscDns = required(args, "psc-dns");
-    String connIds = required(args, "psc-conn-id");
+    String connIds = args.get("psc-conn-id");
+    String mode = args.get("mode").isEmpty() ? (connIds.isEmpty() ? "direct" : "psc") : args.get("mode");
+    boolean psc = mode.equals("psc");
+    if (!psc && !mode.equals("direct")) {
+      System.err.println("--mode must be psc or direct, not " + mode);
+      System.exit(2);
+    }
     String dc = required(args, "dc");
-    int port = Integer.parseInt(args.get("port"));
     boolean tls = !args.get("ca-file").isEmpty();
     boolean shardAware = Boolean.parseBoolean(args.get("shard-aware"));
+    int port = !args.get("port").isEmpty() ? Integer.parseInt(args.get("port"))
+        : psc ? 9000
+        : shardAware ? (tls ? 19142 : 19042)
+        : (tls ? 9142 : 9042);
 
-    System.out.printf(
-        "Connection to Endpoint: %s on port %d using connection_id %s, DC %s%s, shard-aware %s%n",
-        pscDns, port, connIds, dc,
+    String target;
+    List<InetSocketAddress> contactPoints = new ArrayList<>();
+    if (psc) {
+      String pscDns = required(args, "psc-dns");
+      required(args, "psc-conn-id");
+      // client routes do not translate contact points: the contact point is the PSC endpoint itself
+      contactPoints.add(InetSocketAddress.createUnresolved(pscDns, port));
+      target = String.format("PSC endpoint %s on port %d using connection_id %s", pscDns, port, connIds);
+    } else {
+      for (String host : required(args, "contact-points").split(",")) {
+        contactPoints.add(InetSocketAddress.createUnresolved(host.trim(), port));
+      }
+      target = String.format("nodes %s (direct) on port %d", args.get("contact-points"), port);
+    }
+    System.out.printf("Connection to %s, DC %s%s, shard-aware %s%n", target, dc,
         tls ? String.format(", TLS (CA %s, TLS name %s)", args.get("ca-file"),
             args.get("tls-name").isEmpty() ? "<none: CA only>" : args.get("tls-name")) : "",
         shardAware);
-
-    // the client routes address override is the PSC DNS name, so the driver reaches every node through it
-    ClientRoutesConfig.Builder routes = ClientRoutesConfig.builder().withShardAwareness(shardAware);
-    for (String connId : connIds.split(",")) {
-      routes.addEndpoint(new ClientRouteProxy(connId.trim(), pscDns));
-    }
 
     DriverConfigLoader config =
         DriverConfigLoader.programmaticBuilder()
@@ -133,17 +156,23 @@ public class PscSample {
             .withDuration(DefaultDriverOption.CONTROL_CONNECTION_AGREEMENT_TIMEOUT, Duration.ofSeconds(30))
             .build();
 
-    // client routes do not translate contact points: the contact point is the PSC endpoint itself
     var builder =
         CqlSession.builder()
-            .addContactPoint(InetSocketAddress.createUnresolved(pscDns, port))
+            .addContactPoints(contactPoints)
             .withLocalDatacenter(dc)
             .withAuthCredentials(args.get("user"), args.get("password"))
             .withApplicationName(APP_NAME)
-            .withClientRoutesConfig(routes.build())
             .withConfigLoader(config);
+    if (psc) {
+      // the client routes address override is the PSC DNS name, so the driver reaches every node through it
+      ClientRoutesConfig.Builder routes = ClientRoutesConfig.builder().withShardAwareness(shardAware);
+      for (String connId : connIds.split(",")) {
+        routes.addEndpoint(new ClientRouteProxy(connId.trim(), args.get("psc-dns")));
+      }
+      builder.withClientRoutesConfig(routes.build());
+    }
     if (tls) {
-      // with an SSL engine factory the driver uses tls_port from system.client_routes instead of port
+      // psc: with an SSL engine factory the driver uses tls_port from system.client_routes instead of port
       builder.withSslEngineFactory(
           new PscSslEngineFactory(loadCa(args.get("ca-file")), args.get("tls-name")));
     }
@@ -156,7 +185,7 @@ public class PscSample {
       int waitSeconds = Integer.parseInt(args.get("pool-wait"));
       System.out.printf("Waiting %d s for the connection pools to fill...%n", waitSeconds);
       Thread.sleep(waitSeconds * 1000L);
-      checkShardAwareness(session);
+      checkShardAwareness(session, psc);
 
       String ks = args.get("keyspace");
       String table = args.get("table");
@@ -179,7 +208,7 @@ public class PscSample {
    * sees them in system.clients (source port, shard, TLS). port % shard_count == shard_id means the node
    * placed the connection on the shard the driver asked for.
    */
-  private static void checkShardAwareness(CqlSession session) {
+  private static void checkShardAwareness(CqlSession session, boolean psc) {
     System.out.println();
     System.out.println("=== Shard-awareness check (system.clients on each node) ===");
     int totalChosen = 0;
@@ -191,9 +220,10 @@ public class PscSample {
       int shards = sharding == null ? 0 : sharding.getShardsCount();
       System.out.printf("%nnode %s  dc %s  rack %s  endpoint %s%n", node.getHostId(), node.getDatacenter(),
           node.getRack(), node.getEndPoint());
-      System.out.printf("  shards %d, advertised shard-aware ports %s / %s (ssl) - not used by client routes%n",
+      System.out.printf("  shards %d, advertised shard-aware ports %s / %s (ssl) - %s%n",
           shards, sharding == null ? "-" : sharding.getShardAwarePort(),
-          sharding == null ? "-" : sharding.getShardAwarePortSsl());
+          sharding == null ? "-" : sharding.getShardAwarePortSsl(),
+          psc ? "not used by client routes" : "dialed directly");
       if (shards == 0) {
         System.out.println("  no sharding info (no connection to this node yet)");
         continue;

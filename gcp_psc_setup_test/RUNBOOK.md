@@ -258,6 +258,13 @@ an env file:
 
 See `psc.env.example` for the format.
 
+The samples also connect straight to the nodes, for example over VPC peering. Run
+`./direct_env.bash <cluster_id>` to write `sample-apps/direct-<id>.env`, plus `direct-tls-<id>.env` when the
+cluster has client-to-node encryption. These files set `SCYLLA_MODE=direct` and list the node DNS names as
+`SCYLLA_CONTACT_POINTS`. In direct mode, Python, Go and scylla-bench connect on 9042, or 9142 with TLS, and the
+driver finds the shard-aware ports itself. Java 4.x has to be given the shard-aware port as its contact port,
+so it uses 19042, or 19142 with TLS.
+
 ```bash
 ./build_binaries.bash linux/amd64              # bin/psc_go.* and bin/scylla-bench.*
 (cd java-psc && mvn -q package)                # java-psc/target/psc-sample.jar
@@ -325,6 +332,7 @@ Results on 54793 from `tjl-client-arm` (2026-10-29):
 | Java `--pool-size 16`, TLS | 19/45 (chance) |
 | Java `--pool-size 16`, non-TLS | 21/45 (chance) |
 | Java and Python, 1 connection per shard, both TLS modes | 3/3 in every run, but inconclusive |
+| Control: Java `--pool-size 16`, **direct over VPC peering**, TLS and non-TLS | 45/45 in both |
 
 - The nodes see the VM's own address (10.138.0.83) and the driver's source port, so PPv2 carries both through
   PSC.
@@ -332,6 +340,8 @@ Results on 54793 from `tjl-client-arm` (2026-10-29):
 - The small runs only looked right. The driver then asks only for the shard the first connection missed, and a
   node that hands out shards in turn gets that right too. The samples now report fewer than 10 shard-requested
   connections as inconclusive.
+- The control run over VPC peering puts every connection on the requested shard, through the shard-aware ports
+  19042/19142. So the drivers and the test are fine, and the gap is in the PSC/PPv2 path.
 - Requests are still routed to the right shard's connection. Only filling the pool takes extra connection
   attempts.
 

@@ -14,13 +14,13 @@ from cassandra.cluster import (
     ClientRoutesConfig,
     Cluster,
     ExecutionProfile,
+    ShardAwareOptions,
 )
 from cassandra.policies import DCAwareRoundRobinPolicy, RoundRobinPolicy
 
 # Every setting can come from a command line option or, if the option is
 # omitted, from the matching environment variable shown in the help text.
-DEFAULT_PSC_DNS = "<placeholder, insert your PSC endpoint DNS name here>"
-DEFAULT_PSC_CONN_ID = "<placeholder, insert your PSC connection_id here>"
+# Two connection models: psc (PSC endpoint + client routes) or direct (node addresses, e.g. over VPC peering).
 DEFAULT_PSC_PORT = 9000
 DEFAULT_USER = "<placeholder, insert your user id here>"
 DEFAULT_PASSWORD = "<placeholder, insert your password here>"
@@ -35,21 +35,31 @@ SHARD_PORT_HIGH = 20000
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        description="ScyllaDB Cloud PSC connectivity sample: connects over a Private "
-                    "Service Connect endpoint and runs a small CRUD example.",
+        description="ScyllaDB Cloud connectivity sample: connects over a Private Service Connect endpoint "
+                    "(psc) or straight to the nodes, e.g. over VPC peering (direct), checks shard-awareness "
+                    "and runs a small CRUD example.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--psc-dns", default=os.environ.get("SCYLLA_PSC_DNS", DEFAULT_PSC_DNS),
-        help="PSC endpoint DNS name [env: SCYLLA_PSC_DNS]",
+        "--mode", choices=("psc", "direct"), default=os.environ.get("SCYLLA_MODE") or None,
+        help="psc or direct (default: psc when a connection_id is given, else direct) [env: SCYLLA_MODE]",
     )
     parser.add_argument(
-        "--psc-conn-id", default=os.environ.get("SCYLLA_PSC_CONN_ID", DEFAULT_PSC_CONN_ID),
-        help="PSC connection_id; comma separated for several proxies [env: SCYLLA_PSC_CONN_ID]",
+        "--psc-dns", default=os.environ.get("SCYLLA_PSC_DNS", ""),
+        help="psc: PSC endpoint DNS name [env: SCYLLA_PSC_DNS]",
     )
     parser.add_argument(
-        "--port", type=int, default=int(os.environ.get("SCYLLA_PSC_PORT", DEFAULT_PSC_PORT)),
-        help="CQL port on the PSC endpoint [env: SCYLLA_PSC_PORT]",
+        "--psc-conn-id", default=os.environ.get("SCYLLA_PSC_CONN_ID", ""),
+        help="psc: PSC connection_id; comma separated for several proxies [env: SCYLLA_PSC_CONN_ID]",
+    )
+    parser.add_argument(
+        "--contact-points", default=os.environ.get("SCYLLA_CONTACT_POINTS", ""),
+        help="direct: node addresses, comma separated [env: SCYLLA_CONTACT_POINTS]",
+    )
+    parser.add_argument(
+        "--port", type=int,
+        default=int(os.environ.get("SCYLLA_PORT") or os.environ.get("SCYLLA_PSC_PORT") or 0) or None,
+        help="CQL port (default: psc 9000, direct 9042 or 9142 with TLS) [env: SCYLLA_PORT]",
     )
     parser.add_argument(
         "--user", default=os.environ.get("SCYLLA_USER", DEFAULT_USER),
@@ -113,38 +123,61 @@ def parse_args(argv=None):
         help="Leave the keyspace and table in place instead of dropping them "
              "at the end [env: SCYLLA_KEEP_SCHEMA]",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.mode is None:
+        args.mode = "psc" if args.psc_conn_id else "direct"
+    if args.mode == "psc" and not (args.psc_dns and args.psc_conn_id):
+        parser.error("psc mode needs --psc-dns and --psc-conn-id")
+    if args.mode == "direct" and not args.contact_points:
+        parser.error("direct mode needs --contact-points")
+    if args.port is None:
+        args.port = DEFAULT_PSC_PORT if args.mode == "psc" else 9142 if args.ca_file else 9042
+    return args
 
 
 def build_cluster(args):
-    """Build the PSC-routed Cluster. The caller owns its lifetime."""
+    """Build the Cluster for the chosen connection model. The caller owns its lifetime."""
     # execution profile: load balancing, consistency and timeouts for every query
     profile = ExecutionProfile(
         load_balancing_policy=DCAwareRoundRobinPolicy(local_dc=args.dc) if args.dc else RoundRobinPolicy(),
         consistency_level=ConsistencyLevel.LOCAL_QUORUM if args.dc else ConsistencyLevel.QUORUM,
         request_timeout=args.request_timeout,
     )
-    # TLS: verify the CA chain and send the TLS name as SNI. The driver (3.29) refuses check_hostname together
-    # with client_routes_config, so the TLS name itself is not verified here (gocql can verify it)
+    shard_aware = args.shard_aware == "true"
     tls = {}
     if args.ca_file:
+        # Verify the CA chain and send the cluster TLS name as SNI; the node certificates carry it. The driver
+        # (3.29) refuses check_hostname together with client_routes_config, so only direct mode verifies the
+        # name itself (gocql and the Java sample verify it in both modes)
         ssl_context = ssl.create_default_context(cafile=args.ca_file)
-        ssl_context.check_hostname = False
+        ssl_context.check_hostname = args.mode == "direct" and bool(args.tls_name)
         tls["ssl_context"] = ssl_context
         if args.tls_name:
             tls["ssl_options"] = {"server_hostname": args.tls_name}
+
+    if args.mode == "psc":
+        # advanced_shard_awareness: the driver binds a source port with port % shards == wanted shard and still
+        # connects to the client_routes port (tls_port for TLS), not to the advertised 19042/19142
+        routing = {
+            "contact_points": [args.psc_dns],
+            "client_routes_config": ClientRoutesConfig(
+                proxies=[ClientRouteProxy(conn_id) for conn_id in args.psc_conn_id.split(",")],
+                advanced_shard_awareness=shard_aware,
+            ),
+        }
+    else:
+        # direct: the driver dials the node's shard-aware port (19042, or 19142 with TLS) from a source port
+        # chosen for the shard, the normal ScyllaDB setup
+        routing = {
+            "contact_points": [cp.strip() for cp in args.contact_points.split(",")],
+            "shard_aware_options": ShardAwareOptions(disable_shardaware_port=not shard_aware),
+        }
     return Cluster(
-        contact_points=[args.psc_dns],
         port=args.port,
         auth_provider=PlainTextAuthProvider(args.user, args.password),
         execution_profiles={EXEC_PROFILE_DEFAULT: profile},
-        # advanced_shard_awareness: the driver binds a source port with port % shards == wanted shard and still
-        # connects to the client_routes port (tls_port for TLS), not to the advertised 19042/19142
-        client_routes_config=ClientRoutesConfig(
-            proxies=[ClientRouteProxy(conn_id) for conn_id in args.psc_conn_id.split(",")],
-            advanced_shard_awareness=args.shard_aware == "true",
-        ),
         protocol_version=args.protocol_version,
+        **routing,
         **tls,
     )
 
@@ -158,7 +191,7 @@ def _local_addr(conn):
         return None
 
 
-def check_shard_awareness(cluster, session):
+def check_shard_awareness(cluster, session, mode):
     """
     For every node: shard count and this session's connections as the node sees them in system.clients
     (source address and port, shard, TLS). Our connections are found by their local (ip, port), read from the
@@ -184,7 +217,7 @@ def check_shard_awareness(cluster, session):
         print(f"\nnode {host.host_id}  dc {host.datacenter}  rack {host.rack}")
         print(f"  shards {shards}, advertised shard-aware ports "
               f"{info.shard_aware_port if info else '-'} / {info.shard_aware_port_ssl if info else '-'} (ssl)"
-              " - not used by client routes")
+              + (" - not used by client routes" if mode == "psc" else " - dialed directly"))
         if not shards:
             print("  no sharding info (no connection to this node yet)")
             continue
@@ -302,9 +335,11 @@ def run_example(session, table):
 
 def main(argv=None):
     args = parse_args(argv)
-    print(f"Connection to Endpoint: {args.psc_dns} on port {args.port} "
-          f"using connection_id {args.psc_conn_id}"
-          + (f", TLS (CA {args.ca_file}, SNI {args.tls_name or '<none>'})" if args.ca_file else "")
+    target = (f"PSC endpoint {args.psc_dns} on port {args.port} using connection_id {args.psc_conn_id}"
+              if args.mode == "psc" else f"nodes {args.contact_points} (direct) on port {args.port}")
+    print(f"Connection to {target}"
+          + (f", TLS (CA {args.ca_file}, {'verified' if args.mode == 'direct' and args.tls_name else 'SNI'} "
+             f"{args.tls_name or '<none>'})" if args.ca_file else "")
           + f", shard-aware {args.shard_aware}")
     # `with` shuts the cluster (and its sessions) down on every exit path.
     # module-level generator, read when a shard-aware connection binds its source port
@@ -314,7 +349,7 @@ def main(argv=None):
         session = cluster.connect()
         print(f"Waiting {args.pool_wait:g} s for the connection pools to fill...")
         time.sleep(args.pool_wait)
-        check_shard_awareness(cluster, session)
+        check_shard_awareness(cluster, session, args.mode)
         create_schema(session, args.keyspace, args.table, args.replication_factor)
         try:
             run_example(session, args.table)

@@ -52,6 +52,7 @@ write_sample_env() {
   local env_file=$1 domain=$2 client_route=$3 tls=$4
   {
     echo "# PSC connection ${name} (${connection_id}) of cluster ${cluster_id}, written by psc_generate_client.bash"
+    echo "SCYLLA_MODE=psc"
     echo "SCYLLA_PSC_DNS=${domain}"
     echo "SCYLLA_PSC_CONN_ID=${client_route}"
     echo "SCYLLA_PSC_PORT=9000"

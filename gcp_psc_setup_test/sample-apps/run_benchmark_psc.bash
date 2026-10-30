@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Runs scylla-bench through the PSC endpoint. Settings and credentials: see psc_env.bash.
+# Runs scylla-bench through the PSC endpoint (psc) or straight to the nodes (direct, e.g. VPC peering).
+# Settings and credentials: see psc_env.bash.
 #
 #   PSC_ENV=psc-<connection_name>.env ./run_benchmark_psc.bash [extra scylla-bench flags]
 #
@@ -25,6 +26,13 @@ if [[ ! -x "$scylla_bench" ]]; then
 fi
 
 extra=()
+if [[ ${SCYLLA_MODE} == psc ]]; then
+  nodes="${SCYLLA_PSC_DNS}:${SCYLLA_PORT}"
+  extra+=(-client-routes-connection-ids "${SCYLLA_PSC_CONN_ID}")
+else
+  port=${SCYLLA_PORT:-$([[ -n ${SCYLLA_CA_FILE} ]] && echo 9142 || echo 9042)}
+  nodes=$(sed "s/\([^,]*\)/\1:${port}/g" <<< "${SCYLLA_CONTACT_POINTS}")
+fi
 [[ -n ${SCYLLA_CA_FILE} ]] && extra+=(-tls -tls-ca-cert-file "${SCYLLA_CA_FILE}")
 [[ -n ${SCYLLA_DC} ]] && extra+=(-datacenter "${SCYLLA_DC}")
 
@@ -32,11 +40,10 @@ set -x
 "$scylla_bench" \
   -workload uniform \
   -mode mixed \
-  -nodes "${SCYLLA_PSC_DNS}:${SCYLLA_PSC_PORT}" \
+  -nodes "${nodes}" \
   -username "$SCYLLA_USER" \
   -password "$SCYLLA_PASSWORD" \
   -replication-factor 3 \
   -concurrency 512 \
   -duration 300s \
-  -client-routes-connection-ids "${SCYLLA_PSC_CONN_ID}" \
   ${extra[@]+"${extra[@]}"} "$@"
