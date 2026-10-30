@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 # Write the sample-app env files for connecting straight to the nodes (SCYLLA_MODE=direct), e.g. over VPC
-# peering: sample-apps/direct-<cluster_id>.env (plain) and, when the cluster has client-to-node encryption,
-# sample-apps/direct-tls-<cluster_id>.env. The PSC counterparts come from psc_generate_client.bash.
+# peering: sample_apps/direct-<cluster_id>.env (plain) and, when the cluster has client-to-node encryption,
+# sample_apps/direct-tls-<cluster_id>.env. The PSC counterparts come from psc_generate_client.bash.
 # Contact points are the node DNS names of the cluster's DC; with private broadcast they resolve to the node
 # private IPs, so they only work from a network that reaches those IPs (peering, VPN).
 #
@@ -45,7 +45,7 @@ write_env() {
   echo "Wrote ${env_file}"
 }
 
-write_env "${script_dir}/sample-apps/direct-${cluster_id}.env" false
+write_env "${script_dir}/sample_apps/direct-${cluster_id}.env" false
 
 # TLS needs client-to-node encryption on the cluster (encryptionMode "both" or similar), the CA and the TLS name
 if [[ -n ${encryption} && ${encryption} != none && ${encryption} != NONE ]]; then
@@ -58,12 +58,12 @@ if [[ -n ${encryption} && ${encryption} != none && ${encryption} != NONE ]]; the
     rm -f "${ca_file}"
   else
     [[ -n ${tls_name} ]] || echo "WARNING: TLS name not found (cx unavailable?); TLS will check the CA only" >&2
-    write_env "${script_dir}/sample-apps/direct-tls-${cluster_id}.env" true
+    write_env "${script_dir}/sample_apps/direct-tls-${cluster_id}.env" true
   fi
 fi
 
 echo
-echo "In sample-apps/, from a VM that reaches the node private IPs (export SCYLLA_PASSWORD first):"
+echo "In sample_apps/, from a VM that reaches the node private IPs (export SCYLLA_PASSWORD first):"
 for env in direct-${cluster_id}.env direct-tls-${cluster_id}.env; do
-  [[ -f ${script_dir}/sample-apps/${env} ]] && echo "  PSC_ENV=${env} ./run_sample_java.bash --pool-size 16 --pool-wait 15"
+  [[ -f ${script_dir}/sample_apps/${env} ]] && echo "  PSC_ENV=${env} ./run_sample_java.bash --pool-size 16 --pool-wait 15"
 done

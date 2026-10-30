@@ -245,13 +245,13 @@ cluster.SslOpts = &gocql.SslOptions{
 
 ## Sample apps
 
-In `sample-apps/`. Build the binaries locally and rsync them to the VM, which may have no Go, Maven or
+In `sample_apps/`. Build the binaries locally and rsync them to the VM, which may have no Go, Maven or
 internet access.
 
 All four samples read the same `SCYLLA_*` variables through `psc_env.bash`. Per-connection values come from
 an env file:
 
-- `psc_generate_client.bash` writes `sample-apps/psc-<connection_name>.env` for each connection.
+- `psc_generate_client.bash` writes `sample_apps/psc-<connection_name>.env` for each connection.
 - `PSC_ENV=<file>` picks the file. Without it, the samples use `./psc.env`.
 - A variable already set in the environment overrides the file.
 - The password never goes in a file.
@@ -259,7 +259,7 @@ an env file:
 See `psc.env.example` for the format.
 
 The samples also connect straight to the nodes, for example over VPC peering. Run
-`./direct_env.bash <cluster_id>` to write `sample-apps/direct-<id>.env`, plus `direct-tls-<id>.env` when the
+`./direct_env.bash <cluster_id>` to write `sample_apps/direct-<id>.env`, plus `direct-tls-<id>.env` when the
 cluster has client-to-node encryption. These files set `SCYLLA_MODE=direct` and list the node DNS names as
 `SCYLLA_CONTACT_POINTS`. In direct mode, Python, Go and scylla-bench connect on 9042, or 9142 with TLS, and the
 driver finds the shard-aware ports itself. Java 4.x has to be given the shard-aware port as its contact port,

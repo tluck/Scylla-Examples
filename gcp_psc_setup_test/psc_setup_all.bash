@@ -36,19 +36,19 @@ echo
 echo "=== 3/3 consumer endpoints in ${consumer_project} ${region} ==="
 "${script_dir}/psc_generate_client.bash" ${cluster_id} "" ${consumer_project} ${region} || exit 1
 
-# psc_generate_client.bash wrote one sample-apps env file per ACTIVE connection; list them with the run commands
+# psc_generate_client.bash wrote one sample_apps env file per ACTIVE connection; list them with the run commands
 echo
 echo "=== Sample apps for cluster ${cluster_id} ==="
 psc_connections ${cluster_id} | while read -r connection; do
   name=$(jq -r .name <<< "${connection}")
-  env_file="${script_dir}/sample-apps/psc-${name#psc-}.env"
+  env_file="${script_dir}/sample_apps/psc-${name#psc-}.env"
   [[ -f ${env_file} ]] || continue
   echo
   echo "$(basename "${env_file}")  ($([[ $(jq -r .data.tls <<< "${connection}") == true ]] && echo TLS || echo non-TLS), connection $(jq -r .id <<< "${connection}"))"
   sed -n 's/^SCYLLA_/  SCYLLA_/p' "${env_file}"
 done
 echo
-echo "Copy sample-apps/ (with the env files, bin/ and java-psc/target/psc-sample.jar) and ca-${cluster_id}.pem to"
-echo "the client VM, then in sample-apps/:"
+echo "Copy sample_apps/ (with the env files, bin/ and java-psc/target/psc-sample.jar) and ca-${cluster_id}.pem to"
+echo "the client VM, then in sample_apps/:"
 echo "  export SCYLLA_PASSWORD='...'   # API cluster/connect?clusterId=${cluster_id}, .data.credentials.password"
 echo "  PSC_ENV=<env file> ./run_sample_python.bash   (or run_sample_go.bash, run_sample_java.bash, run_benchmark_psc.bash)"

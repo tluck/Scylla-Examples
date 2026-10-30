@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Consumer side of the cluster's PSC connection(s): generate terraform, create the endpoint with gcloud
-# (static IP, forwarding rule, private DNS zone + A record), write sample-apps/psc-<name>.env for the sample
+# (static IP, forwarding rule, private DNS zone + A record), write sample_apps/psc-<name>.env for the sample
 # apps, and print the connect examples.
 # Without connection_name every PSC connection of the cluster is handled; each gets its own psc_<id>/ directory
 # (the generated files declare the same variables/provider, so they cannot share one terraform directory).
@@ -47,7 +47,7 @@ fi
 # local datacenter for the sample apps (the Java driver requires it)
 dc_name=$(api GET "/cluster/${cluster_id}" | jq -r '.data.cluster.dc.name // empty')
 
-# per-connection settings for the sample apps (sample-apps/psc_env.bash); no password, git-ignored (*.env)
+# per-connection settings for the sample apps (sample_apps/psc_env.bash); no password, git-ignored (*.env)
 write_sample_env() {
   local env_file=$1 domain=$2 client_route=$3 tls=$4
   {
@@ -192,9 +192,9 @@ while read -r connection <&3; do
   echo "Ports: 9000-9002 discovery, 9003+ one node each (psc_get_connection_ids.bash ${cluster_id})"
   echo "Client route ID: ${client_route}"
   env_name="psc-${name#psc-}.env"
-  write_sample_env "${script_dir}/sample-apps/${env_name}" ${domain} ${client_route} ${tls}
+  write_sample_env "${script_dir}/sample_apps/${env_name}" ${domain} ${client_route} ${tls}
   echo
-  echo "Sample apps (in sample-apps/, export SCYLLA_PASSWORD first):"
+  echo "Sample apps (in sample_apps/, export SCYLLA_PASSWORD first):"
   for run in run_sample_go.bash run_sample_python.bash run_sample_java.bash run_benchmark_psc.bash; do
     echo "  PSC_ENV=${env_name} ./${run}"
   done
