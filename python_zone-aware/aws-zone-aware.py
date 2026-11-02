@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import os
 from json import load
 from cassandra.cluster import Cluster, ExecutionProfile, EXEC_PROFILE_DEFAULT
 from cassandra.concurrent import execute_concurrent_with_args
@@ -31,8 +32,9 @@ nodes = [
 CONTACT_POINTS = [
     nodes[n],  # AWS US West 2 AZ1
 ]
-USERNAME = "scylla"  
-PASSWORD = "DZL9wN5PAfGl2Eh"
+# from the environment, e.g. . cluster-<id>.env (sc_api/gen_cluster_env.bash)
+USERNAME = os.environ.get("USERNAME") or "scylla"
+PASSWORD = os.environ.get("PASSWORD") or "cassandra"
 KEYSPACE = "mykeyspace"
 TABLE = "mytable"
 DC="AWS_US_WEST_2"  # Your region as DC name in ScyllaDB

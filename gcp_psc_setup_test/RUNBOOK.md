@@ -268,6 +268,7 @@ so it uses 19042, or 19142 with TLS.
 ```bash
 ./build_binaries.bash linux/amd64              # bin/psc_go.* and bin/scylla-bench.*
 (cd java-psc && mvn -q package)                # java-psc/target/psc-sample.jar
+pip3 install -r requirements.txt               # scylla-driver for run_sample_python.bash
 export SCYLLA_PASSWORD=...
 
 PSC_ENV=psc-<connection_name>.env ./run_sample_go.bash
@@ -303,7 +304,7 @@ Verified on 54742 from `tjl-client-arm` (2026-10-28):
 | Python, plain | 823 (TLS) | fails: `does not support protocol version 21` (a TLS alert read as CQL) |
 | Python, plain | 822 (plain) | CRUD works |
 
-Java (driver 4.19.2.3) with a shard-awareness check: `run_sample_java.bash`. The VM needs a JRE 11+.
+Java (driver 4.19.4.0) with a shard-awareness check: `run_sample_java.bash`. The VM needs a JRE 11+.
 
 ```bash
 PSC_ENV=psc-<tls_connection_name>.env ./run_sample_java.bash
@@ -318,14 +319,14 @@ its connections. When `port % shard_count == shard_id` on every connection, shar
 end through PSC. For that, the original source port has to reach the node through Proxy Protocol v2.
 
 In client-routes mode, the driver binds a local port chosen for the shard and connects to `port` or
-`tls_port`. It never dials 19042/19142. In 4.19.2.3, `ClientRoutesConfig.withShardAwareness()` is stored
+`tls_port`. It never dials 19042/19142. In 4.19.2.3 and 4.19.4.0, `ClientRoutesConfig.withShardAwareness()` is stored
 but not read anywhere, so `advanced-shard-awareness.enabled` is the setting that takes effect.
 
 `sample_python_psc.py` runs the same check, with `--shard-aware true|false` and `--pool-wait`. It finds its own
 connections by reading their local ports from the driver's pools. The Python driver keeps one connection per
 shard, so it has no `--pool-size`.
 
-Results on 54793 from `tjl-client-arm` (2026-10-29):
+Results on 54793 from `tjl-client-arm` (2026-10-29, driver 4.19.2.3):
 
 | Run | Shard-requested connections on the requested shard |
 |---|---|

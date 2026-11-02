@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Runs the Java sample (java-psc/, driver 4.19.2.x) with its per-node shard-awareness check.
+# Runs the Java sample (java-psc/, driver 4.19.4.0) with its per-node shard-awareness check.
 # Settings and credentials: see psc_env.bash. SCYLLA_DC is required here.
 #
 #   PSC_ENV=psc-<connection_name>.env ./run_sample_java.bash [options]

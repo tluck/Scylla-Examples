@@ -32,7 +32,7 @@ import javax.net.ssl.SSLParameters;
 import javax.net.ssl.TrustManagerFactory;
 
 /**
- * ScyllaDB Cloud connectivity sample (Java driver 4.19.2.x): connects over a Private Service Connect endpoint
+ * ScyllaDB Cloud connectivity sample (Java driver 4.19.2.x or later, built with 4.19.4.0): connects over a Private Service Connect endpoint
  * with client routes (--mode psc) or straight to the nodes, e.g. over VPC peering (--mode direct), optionally
  * over TLS, checks shard-awareness per node, and runs a small CRUD example. Java counterpart of
  * sample_python_psc.py.

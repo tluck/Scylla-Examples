@@ -1,33 +1,27 @@
 datastax-java-driver {
-
   basic {
     contact-points = [
       "node-2.aws-us-west-2.6081f40a1bb45d3c6daa.clusters.scylla.cloud:19042",
       "node-1.aws-us-west-2.6081f40a1bb45d3c6daa.clusters.scylla.cloud:19042",
-      "node-0.aws-us-west-2.6081f40a1bb45d3c6daa.clusters.scylla.cloud:19042",
+      "node-0.aws-us-west-2.6081f40a1bb45d3c6daa.clusters.scylla.cloud:19042"
     ]
 
     load-balancing-policy {
       local-datacenter = "AWS_US_WEST_2"
-      local-rack = "usw2-az2"
-      slow-replica-avoidance = false 
+      local-rack = "usw2-az2"          # run_it.bash rewrites this for each AZ
+      slow-replica-avoidance = false   # keep requests in local-rack even if a replica there is slower
     }
   }
 
   advanced {
     auth-provider {
       class = PlainTextAuthProvider
-      username = "scylla"
-      password = "DZL9wN5PAfGl2Eh"
+      # from the environment, e.g. . cluster-<id>.env (sc_api/gen_cluster_env.bash)
+      username = scylla
+      username = ${?USERNAME}
+      password = ${?PASSWORD}
     }
 
-    load-balancing-policy {
-      allow-remote-dc-connections = false
-    }
-
-    connection {
-      pool.local.size = 8        # LOCAL: 8 conns
-      pool.remote.size = 1       # REMOTE: 1 conn  
-    }
+    connection.pool.local.size = 8
   }
 }

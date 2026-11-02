@@ -6,30 +6,30 @@
 
   <groupId>com.scylladb</groupId>
   <artifactId>test</artifactId>
-  <version>4.19.0.1</version>
+  <version>4.19.4.0</version>
 
   <dependencies>
     <dependency>
       <groupId>com.scylladb</groupId>
       <artifactId>java-driver-core</artifactId>
-      <version>4.19.0.1</version>
+      <version>4.19.4.0</version>
     </dependency>
     <dependency>
       <groupId>ch.qos.logback</groupId>
       <artifactId>logback-classic</artifactId>
-      <version>1.2.3</version>
+      <version>1.5.38</version>
     </dependency>
   </dependencies>
 
   <build>
     <plugins>
-      <!-- FIXED: Added groupId + version, modern Java 8 config -->
+      <!-- FIXED: Added groupId + version, Java 11 (driver 4.19.2+ needs Java 11) -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
         <version>3.13.0</version>
         <configuration>
-          <release>8</release>
+          <release>11</release>
         </configuration>
       </plugin>
 
@@ -43,6 +43,7 @@
             <phase>package</phase>
             <goals><goal>shade</goal></goals>
             <configuration>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                   <mainClass>CreateAndPopulateKeyspace</mainClass>

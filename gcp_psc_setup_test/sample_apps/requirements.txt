@@ -1,0 +1,2 @@
+# sample_python_psc.py needs cassandra.client_routes, first in scylla-driver 3.29.12
+scylla-driver==3.29.13
