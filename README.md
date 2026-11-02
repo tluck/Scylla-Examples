@@ -14,7 +14,7 @@ Scripts, small apps, and reference layouts for working with [ScyllaDB](https://w
 | `java` | Java driver samples (`simple`, `java-driver`, zone-aware routing, CQL ingest). |
 | `python_parquet_reader` | Ingest and tooling for Parquet/JSON/CSV paths into ScyllaDB (Python, batch scripts). |
 | `python_zone-aware` | Standalone Python snippet for AWS zone-aware placement. |
-| `sample_apps` | Larger demos: Alternator (Java/Python/Boto3), CQL loaders, Docker/Kubernetes deploy scripts, tombstone/compression experiments. Copied from [Scylla-K8s-Example](https://github.com/tluck/Scylla-K8s-Example) — see below. |
+| `sample_app` | Larger demos: Alternator (Java/Python/Boto3), CQL loaders, Docker/Kubernetes deploy scripts, tombstone/compression experiments. Copied from [Scylla-K8s-Example](https://github.com/tluck/Scylla-K8s-Example) — see below. |
 | `sc_api` | Bash/Python helpers for ScyllaDB Cloud (cluster CLI, certs, firewall/CIDR, adding/removing DCs, VM listing). |
 | `sc_terraform` | Terraform for ScyllaDB Cloud clusters and networking on **AWS** and **GCP** (see its own README). |
 
@@ -35,20 +35,29 @@ cd Scylla-Examples
 git submodule update --init --recursive
 ```
 
-## `sample_apps` is a copy
+## `sample_app` is a copy
 
-The source of truth for `sample_apps/` is `sample_app/` in [Scylla-K8s-Example](https://github.com/tluck/Scylla-K8s-Example). Make changes there, then copy them here and commit:
+The source of truth for `sample_app/` is `sample_app/` in [Scylla-K8s-Example](https://github.com/tluck/Scylla-K8s-Example). Make changes there, then copy them here and commit:
 
 ```bash
-rsync -av --delete --copy-unsafe-links \
-  --exclude='.git*' --exclude=__pycache__ --exclude=.ruff_cache \
-  --exclude=.DS_Store --exclude='*.jar' --exclude=target/ \
-  ../Scylla-K8s-Example/sample_app/ sample_apps/
+./sync_sample_app.bash          # copy (rsync --delete), then show git status for sample_app/
+./sync_sample_app.bash -n       # dry run
+./sync_sample_app.bash --check  # exit 1 if the copy is out of date
 ```
 
-Edits made directly in `sample_apps/` are overwritten on the next copy.
+It expects both repos side by side; set `SAMPLE_APP_SRC` if the K8s checkout is elsewhere.
+
+A pre-commit hook in `githooks/` blocks a commit that touches `sample_app/` while the copy is out of date, and warns on other commits. Enable it once per clone:
+
+```bash
+git config core.hooksPath githooks
+```
+
+`config/` (TLS certificates and key) and any old `env` file are local to each checkout and are never copied. Connection settings now come from a `cluster-<id>.env` written by `sc_api/gen_cluster_env.bash`: source it, and `loader.py`, `query.py` and the other apps read `CONTACT_POINTS`, `USERNAME`, `PASSWORD` and `DC` from the environment, so `-s`/`-u`/`-p`/`--dc` are only needed to override it.
+
+Edits made directly in `sample_app/` are overwritten on the next copy.
 
 ## Conventions
 
-- Treat paths under `sample_apps/` and `sc_api/` as **examples**: review scripts before running them in production; adjust regions, cluster names, and credentials.
+- Treat paths under `sample_app/` and `sc_api/` as **examples**: review scripts before running them in production; adjust regions, cluster names, and credentials.
 - Certificates or sample config files in-tree are for illustration; prefer your own secrets management for real deployments.
