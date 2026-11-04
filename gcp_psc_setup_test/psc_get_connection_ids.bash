@@ -16,5 +16,5 @@ psc_connections ${cluster_id} | jq -r '[.id, .name, .status, "tls=\(.data.tls)",
 
 echo
 ${cx_timeout} cx cql -c ${cluster_id} --reason connection_id \
-    '-e select connection_id, address, port, tls_port from system.client_routes' 2>/dev/null | tr -d '\r' \
+    '-e select connection_id, address, port, tls_port from system.client_routes' </dev/null 2>/dev/null | tr -d '\r' \
   || echo "WARNING: cx cql failed or timed out; per-node ports not shown" >&2

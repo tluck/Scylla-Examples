@@ -24,7 +24,7 @@ wanted_port() {
 get_setting() {
   local out rc
   # pipefail: rc is scylla-cloud's (or timeout's 124), not tr's
-  out=$(set -o pipefail; timeout 120 scylla-cloud cluster config get --cluster-id ${cluster_id} $1 2>&1 | tr -d '\r')
+  out=$(set -o pipefail; timeout 120 scylla-cloud cluster config get --cluster-id ${cluster_id} $1 </dev/null 2>&1 | tr -d '\r')
   rc=$?
   if [[ ${rc} == 0 ]]; then
     echo "$(sed -n 's/^value: *"\{0,1\}\([0-9]*\)"\{0,1\}$/\1/p' <<< "${out}") $(sed -n 's/^status: *//p' <<< "${out}")"

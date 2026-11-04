@@ -40,7 +40,7 @@ fi
 # re-issues the node certificates with the name. Only needed when there is a TLS connection
 tls_name=""
 if jq -e 'select(.data.tls==true)' <<< "${connections}" >/dev/null; then
-  tls_name=$(${cx_timeout} scylla-cloud cluster describe --cluster-id ${cluster_id} 2>/dev/null \
+  tls_name=$(${cx_timeout} scylla-cloud cluster describe --cluster-id ${cluster_id} </dev/null 2>/dev/null \
     | tr -d '\r' | sed -n 's/^tlsname: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' | head -1)
 fi
 
@@ -73,7 +73,7 @@ generate_terraform() {
 
   # output has ssh/log noise around (and JSON log lines inside) the terraform; strip CRs, keep from "terraform {"
   # on, drop JSON log lines and the ssh close message
-  ${cx_timeout} sc dev network psc client-setup --connection-ids ${connection_id} 2>/dev/null \
+  ${cx_timeout} sc dev network psc client-setup --connection-ids ${connection_id} </dev/null 2>/dev/null \
     | tr -d '\r' \
     | sed -n '/^terraform {/,$p' \
     | grep -v -e '^{"level":' -e '^Shared connection' > "${tf_file}"
