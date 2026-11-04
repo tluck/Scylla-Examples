@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 #
-# Builds static scylla-bench and psc_go binaries into ./bin for the VMs these
-# folders get rsynced to (which may have no internet or Go toolchain).
+# Builds static scylla-bench and psc_go binaries into ./bin, and the Java sample jar, for the VMs these
+# folders get rsynced to (which may have no internet, Go toolchain or Maven).
 # Binaries are git-ignored - build them locally, then rsync.
 #
 #   ./build_binaries.bash                            # linux/arm64 (default)
 #   ./build_binaries.bash linux/arm64 linux/amd64    # one or more os/arch targets
+#   SKIP_JAVA=1 ./build_binaries.bash                # Go binaries only
 #
-# Output: bin/scylla-bench.<os>-<arch> and bin/psc_go.<os>-<arch>
+# Output: bin/scylla-bench.<os>-<arch>, bin/psc_go.<os>-<arch>, and java-psc/target/psc-sample.jar
+# (one jar for every target: Java 11 bytecode, needs Maven and JDK 11+ here, only a JRE 11+ on the VM)
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -32,3 +34,9 @@ for target in "${targets[@]}"; do
 done
 
 ls -l bin
+
+if [[ -z ${SKIP_JAVA:-} ]]; then
+  echo "building java-psc/target/psc-sample.jar"
+  (cd java-psc && mvn -q package && rm -f target/original-psc-sample.jar)  # drop the unshaded copy
+  ls -l java-psc/target/psc-sample.jar
+fi

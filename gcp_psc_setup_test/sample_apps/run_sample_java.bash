@@ -7,12 +7,12 @@
 #   ... ./run_sample_java.bash --shard-aware false        # compare without shard-aware connections
 #
 # Build the jar first (needs Maven and JDK 11+; the VM only needs a JRE 11+), then rsync it:
-#   (cd java-psc && mvn -q package)       # -> java-psc/target/psc-sample.jar
+#   ./build_binaries.bash   (or: cd java-psc && mvn -q package)   # -> java-psc/target/psc-sample.jar
 
 set -euo pipefail
 cd "$(dirname "$0")"
 source ./psc_env.bash
 
 jar=java-psc/target/psc-sample.jar
-[[ -f ${jar} ]] || { echo "${jar} not found - build it with: (cd java-psc && mvn -q package)" >&2; exit 1; }
+[[ -f ${jar} ]] || { echo "${jar} not found - build it with: ./build_binaries.bash" >&2; exit 1; }
 java -jar "${jar}" "$@"
