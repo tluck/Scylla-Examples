@@ -51,7 +51,7 @@ write_env "${script_dir}/sample_apps/direct-${cluster_id}.env" false
 if [[ -n ${encryption} && ${encryption} != none && ${encryption} != NONE ]]; then
   ca_file="${script_dir}/ca-${cluster_id}.pem"
   api GET "/cluster/${cluster_id}/certificate" | jq -r '.data.content // empty' > "${ca_file}"
-  tls_name=$(${cx_timeout} scylla-cloud cluster describe --cluster-id ${cluster_id} 2>/dev/null \
+  tls_name=$(${cx_timeout} scylla-cloud cluster describe --cluster-id ${cluster_id} </dev/null 2>/dev/null \
     | tr -d '\r' | sed -n 's/^tlsname: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' | head -1)
   if [[ ! -s ${ca_file} ]]; then
     echo "WARNING: could not fetch the CA certificate; no TLS env file written" >&2

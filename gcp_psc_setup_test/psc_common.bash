@@ -9,6 +9,8 @@ default_cluster_id="54867"
 default_consumer_project="cx-sa-lab"
 default_region="us-west1"
 
+# Give every timed cx call </dev/null: cx always runs ssh -t, and under timeout (its own process group) ssh
+# stops on SIGTTOU when it resets a terminal on stdin, so it hangs until the timeout kills it.
 cx_timeout="timeout 120"
 
 if [[ -z ${SC_TOKEN} || -z ${SC_ACCOUNT} ]]; then
