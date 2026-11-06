@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 
-# End to end PSC setup for one cluster, TLS and non-TLS:
-#   1. both PPv2 listeners on the cluster (psc_add_proxy_protocol.bash; no restart when already set)
-#   2. one TLS and one plain PSC connection (psc_connection_setup.bash; a type that already has a connection
-#      on the cluster is skipped, so a UI-created plain connection counts)
-#   3. the consumer endpoint for every PSC connection and the client examples (psc_generate_client.bash)
+# End to end PSC setup for one cluster, for the connection type(s) of tls_mode (true = TLS, false = plain,
+# both = one of each; default_tls_mode in psc_common.bash):
+#   1. the PPv2 listener(s) those connections need (psc_add_proxy_protocol.bash; no restart when already set)
+#   2. a PSC connection per type (psc_connection_setup.bash; a type that already has a connection on the
+#      cluster is skipped, so a UI-created plain connection counts)
+#   3. the consumer endpoint and the client examples for those connections (psc_generate_client.bash)
 # Every step skips what already exists, so the script can be re-run after a failure.
 #
-# usage: psc_setup_all.bash [cluster_id] [interval] [consumer_project] [region] [network]
+# usage: psc_setup_all.bash [cluster_id] [interval] [consumer_project] [region] [network] [tls_mode true|false|both]
 #   interval: time between node restarts when the PPv2 listeners are added (0s for a test cluster with no load)
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
@@ -18,13 +19,15 @@ interval=${2:-${default_interval}} # 10 minutes between node restarts for a clus
 consumer_project=${3:-${default_consumer_project}}
 region=${4:-${default_region}}
 consumer_network=${5:-${default_consumer_network}}
+tls_mode=${6:-${default_tls_mode}}
+tls_list=$(tls_values ${tls_mode}) || exit 1
 
-echo "=== 1/3 PPv2 listeners on cluster ${cluster_id} ==="
-"${script_dir}/psc_add_proxy_protocol.bash" ${cluster_id} ${interval} || exit 1
+echo "=== Step 1 of 3 - check or set up the PPv2 listener(s) for tls_mode ${tls_mode} on cluster ${cluster_id} ==="
+"${script_dir}/psc_add_proxy_protocol.bash" ${cluster_id} ${interval} ${tls_mode} || exit 1
 
-for tls in true false; do
+for tls in ${tls_list}; do
   echo
-  echo "=== 2/3 PSC connection, TLS=${tls} ==="
+  echo "=== Step 2 of 3 - create the PSC connection, TLS=${tls} ==="
   existing=$(psc_connections ${cluster_id} | jq -r --argjson tls ${tls} 'select(.data.tls==$tls) | "\(.id) \(.name) \(.status)"')
   if [[ -n ${existing} ]]; then
     echo "exists: ${existing}"
@@ -33,14 +36,26 @@ for tls in true false; do
   "${script_dir}/psc_connection_setup.bash" ${cluster_id} ${tls} ${consumer_project} || exit 1
 done
 
+# the cluster's PSC connections of the selected type(s), one JSON object per line
+selected_connections() {
+  psc_connections ${cluster_id} | jq -c --arg tls "${tls_list}" 'select(.data.tls|tostring|IN($tls|split(" ")[]))'
+}
+
 echo
-echo "=== 3/3 consumer endpoints in ${consumer_project} ${region} ==="
-"${script_dir}/psc_generate_client.bash" ${cluster_id} "" ${consumer_project} ${region} ${consumer_network} || exit 1
+echo "=== Step 3 of 3 - create the consumer endpoint(s) in ${consumer_project} ${region} ==="
+names=$(selected_connections | jq -r .name)
+if [[ -z ${names} ]]; then
+  echo "ERROR: cluster ${cluster_id} has no PSC connection for tls_mode ${tls_mode}" >&2
+  exit 1
+fi
+for name in ${names}; do
+  "${script_dir}/psc_generate_client.bash" ${cluster_id} ${name} ${consumer_project} ${region} ${consumer_network} || exit 1
+done
 
 # psc_generate_client.bash wrote one sample_apps env file per ACTIVE connection; list them with the run commands
 echo
 echo "=== Sample apps for cluster ${cluster_id} ==="
-psc_connections ${cluster_id} | while read -r connection; do
+selected_connections | while read -r connection; do
   name=$(jq -r .name <<< "${connection}")
   env_file="${script_dir}/sample_apps/psc-${name#psc-}.env"
   [[ -f ${env_file} ]] || continue

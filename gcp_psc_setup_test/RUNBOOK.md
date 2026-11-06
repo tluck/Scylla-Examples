@@ -59,18 +59,21 @@ binaries if you want them (see [Sample apps](#sample-apps)).
 
 ## Quick path: everything at once
 
-`psc_setup_all.bash` runs steps 1-3 for both connection types, then prints the connect examples:
+`psc_setup_all.bash` runs steps 1-3 for the connection type(s) set by `default_tls_mode` in `psc_common.bash`
+(`true` = TLS, `false` = plain, `both` = one of each), then prints the connect examples:
 
 ```bash
-./psc_setup_all.bash [cluster_id] [interval] [consumer_project] [region] [network]   # e.g. 54867 0s cx-sa-lab us-west1
+./psc_setup_all.bash [cluster_id] [interval] [consumer_project] [region] [network] [tls_mode]   # e.g. 54867 0s cx-sa-lab us-west1 both
 ```
 
-It does each of the following only if it isn't already done, so it is safe to re-run:
+The `tls_mode` argument overrides `default_tls_mode` for one run. The script does each of the following only if
+it isn't already done, so it is safe to re-run:
 
-1. Adds the PPv2 listeners. This is a rolling restart, with `interval` between nodes.
-2. Creates one TLS connection and one plain connection. If the cluster already has a connection of a type,
-   including one created in the UI, it skips that type.
-3. Creates the consumer endpoint for every PSC connection.
+1. Adds the PPv2 listener(s) those connection types need: 29042 for plain, 29142 for TLS. This is a rolling
+   restart, with `interval` between nodes.
+2. Creates one connection per type. If the cluster already has a connection of a type, including one created
+   in the UI, it skips that type.
+3. Creates the consumer endpoint for the PSC connections of those types.
 
 The sections below explain each step.
 
@@ -91,12 +94,14 @@ Skip this step for a plain-only setup.
 Swagger does not list `ProxyProtocolV2`, but the create request accepts it. A TLS PSC connection also needs
 client-to-node encryption on the cluster.
 
-**Existing cluster:** this needs a rolling restart, and there is no REST call for it. The script checks first
-and does nothing if both ports are already set:
+**Existing cluster:** this needs a rolling restart, and there is no REST call for it. The script checks only
+the listener(s) for `tls_mode` (29042 for `false`, 29142 for `true`, both for `both`; default
+`default_tls_mode`) and does nothing if they are already set:
 
 ```bash
-./psc_add_proxy_protocol.bash <cluster_id>          # 10 minutes between node restarts
-./psc_add_proxy_protocol.bash <cluster_id> 0s       # no wait (test clusters with no load)
+./psc_add_proxy_protocol.bash <cluster_id>              # 10 minutes between node restarts
+./psc_add_proxy_protocol.bash <cluster_id> 0s           # no wait (test clusters with no load)
+./psc_add_proxy_protocol.bash <cluster_id> 0s both      # override default_tls_mode
 ```
 
 Confirm:

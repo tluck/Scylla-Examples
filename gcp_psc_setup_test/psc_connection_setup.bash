@@ -17,6 +17,10 @@ source "${script_dir}/psc_common.bash"
 cluster_id=${1:-${default_cluster_id}}
 tls=${2:-${default_tls_mode}}
 consumer_project=${3:-${default_consumer_project}}
+if [[ ${tls} != true && ${tls} != false ]]; then
+  echo "ERROR: tls must be true or false (got '${tls}'); psc_setup_all.bash ... both creates one of each" >&2
+  exit 1
+fi
 if [[ ${tls} == true ]]; then
   connection_name=${4:-"psc-tls-${cluster_id}"}
 else
