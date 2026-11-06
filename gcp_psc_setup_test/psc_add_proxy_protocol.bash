@@ -7,24 +7,31 @@
 #
 # usage: psc_add_proxy_protocol.bash [cluster_id] [interval]   (interval 0s for a test cluster with no load)
 #
+# A listener is there when either its plain key or its shard-aware key has the port: clusters created by
+# ScyllaDB Cloud with PSC support come with native_shard_aware_transport_port[_ssl]_proxy_protocol 29042/29142,
+# clusters given the listeners later (this script, older clusters) with native_transport_port[_ssl]_proxy_protocol.
+# Setting the plain key on a cluster that has the shard-aware one would bind the same port twice.
+#
 # There is no REST call for this; it needs scylla-cloud (cx). For a new cluster, set both ports in the create
 # request instead (../sc_api/scylladb_cloud_cli.py create --psc) and skip the restart.
 
-cluster_id=${1:-54742}
-interval=${2:-600s} # 10 minutes between node restarts
+script_dir=$(cd "$(dirname "$0")" && pwd)
+source "${script_dir}/psc_common.bash"
 
-wanted_port() {
-  case $1 in
-    native_transport_port_proxy_protocol) echo 29042 ;;
-    native_transport_port_ssl_proxy_protocol) echo 29142 ;;
-  esac
-}
+cluster_id=${1:-${default_cluster_id}}
+interval=${2:-${default_interval}}
+
+# listener: the port, then the keys that can provide it (the first is the one set when it is missing)
+listeners=(
+  "29042 native_transport_port_proxy_protocol native_shard_aware_transport_port_proxy_protocol"
+  "29142 native_transport_port_ssl_proxy_protocol native_shard_aware_transport_port_ssl_proxy_protocol"
+)
 
 # prints "<value> <status>" when set, "unset" when the cluster has no value; returns 1 when the read failed
 get_setting() {
   local out rc
   # pipefail: rc is scylla-cloud's (or timeout's 124), not tr's
-  out=$(set -o pipefail; timeout 120 scylla-cloud cluster config get --cluster-id ${cluster_id} $1 </dev/null 2>&1 | tr -d '\r')
+  out=$(set -o pipefail; ${cx_timeout} scylla-cloud cluster config get --cluster-id ${cluster_id} $1 </dev/null 2>&1 | tr -d '\r')
   rc=$?
   if [[ ${rc} == 0 ]]; then
     echo "$(sed -n 's/^value: *"\{0,1\}\([0-9]*\)"\{0,1\}$/\1/p' <<< "${out}") $(sed -n 's/^status: *//p' <<< "${out}")"
@@ -38,15 +45,19 @@ get_setting() {
 }
 
 missing=()
-for key in native_transport_port_proxy_protocol native_transport_port_ssl_proxy_protocol; do
-  setting=$(get_setting ${key}) || exit 1
-  read -r value status <<< "${setting}"
-  echo "cluster ${cluster_id}: ${key}=${value}${status:+ (${status})}"
-  if [[ ${value} == "$(wanted_port ${key})" ]]; then
-    [[ ${status} == ACTIVE ]] || echo "  set, but not ACTIVE yet: a restart may still be in progress"
-  else
-    missing+=(-p "${key}=$(wanted_port ${key})")
-  fi
+for listener in "${listeners[@]}"; do
+  read -r port keys <<< "${listener}"
+  found=""
+  for key in ${keys}; do
+    setting=$(get_setting ${key}) || exit 1
+    read -r value status <<< "${setting}"
+    echo "cluster ${cluster_id}: ${key}=${value}${status:+ (${status})}"
+    if [[ ${value} == "${port}" && -z ${found} ]]; then
+      found=${key}
+      [[ ${status} == ACTIVE ]] || echo "  set, but not ACTIVE yet: a restart may still be in progress"
+    fi
+  done
+  [[ -n ${found} ]] || missing+=(-p "${keys%% *}=${port}")
 done
 
 if [[ ${#missing[@]} == 0 ]]; then
