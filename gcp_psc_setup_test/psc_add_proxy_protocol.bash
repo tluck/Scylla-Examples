@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 
-# Give the cluster both proxy protocol v2 listeners: plain (29042) and TLS (29142, needed by a PSC connection
-# created with tls:true). set-and-restart does a rolling restart, so it only runs when a listener is missing,
-# and only after both settings were read successfully: a failed or timed-out read stops the script instead of
-# being taken for "not set".
+# Give the cluster the proxy protocol v2 listener(s) its PSC connections need: plain 29042 (tls_mode false),
+# TLS 29142 (tls_mode true) or both. set-and-restart does a rolling restart, so it only runs when a listener is
+# missing, and only after every setting was read successfully: a failed or timed-out read stops the script
+# instead of being taken for "not set".
 #
-# usage: psc_add_proxy_protocol.bash [cluster_id] [interval]   (interval 0s for a test cluster with no load)
+# usage: psc_add_proxy_protocol.bash [cluster_id] [interval] [tls_mode true|false|both]
+#   interval 0s for a test cluster with no load
 #
 # A listener is there when either its plain key or its shard-aware key has the port: clusters created by
 # ScyllaDB Cloud with PSC support come with native_shard_aware_transport_port[_ssl]_proxy_protocol 29042/29142,
@@ -20,12 +21,18 @@ source "${script_dir}/psc_common.bash"
 
 cluster_id=${1:-${default_cluster_id}}
 interval=${2:-${default_interval}}
+tls_mode=${3:-${default_tls_mode}}
+tls_list=$(tls_values ${tls_mode}) || exit 1
 
 # listener: the port, then the keys that can provide it (the first is the one set when it is missing)
-listeners=(
-  "29042 native_transport_port_proxy_protocol native_shard_aware_transport_port_proxy_protocol"
-  "29142 native_transport_port_ssl_proxy_protocol native_shard_aware_transport_port_ssl_proxy_protocol"
-)
+listeners=()
+for tls in ${tls_list}; do
+  if [[ ${tls} == true ]]; then
+    listeners+=("$(ppv2_port true) native_transport_port_ssl_proxy_protocol native_shard_aware_transport_port_ssl_proxy_protocol")
+  else
+    listeners+=("$(ppv2_port false) native_transport_port_proxy_protocol native_shard_aware_transport_port_proxy_protocol")
+  fi
+done
 
 # prints "<value> <status>" when set, "unset" when the cluster has no value; returns 1 when the read failed
 get_setting() {
@@ -61,7 +68,7 @@ for listener in "${listeners[@]}"; do
 done
 
 if [[ ${#missing[@]} == 0 ]]; then
-  echo "both PPv2 listeners already set, nothing to do"
+  echo "PPv2 listener(s) for tls_mode ${tls_mode} already set, nothing to do"
   exit 0
 fi
 

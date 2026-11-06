@@ -5,10 +5,10 @@
 # system.client_routes ports, the generated terraform); wrap those calls in cx_timeout.
 
 api_base="https://api.cloud.scylladb.com"
-default_cluster_id="55024"
+default_cluster_id="55026"
+default_tls_mode="both"          # PSC connection type(s): true (TLS), false (plain) or both
 default_consumer_project="cx-sa-lab"
 default_region="us-west1"
-default_tls_mode="false"
 default_interval="600s"          # between rolling node restarts when the PPv2 listeners are added; 0s for an idle test cluster
 default_consumer_network="default" # consumer VPC network; its subnet in the region has the same name
 default_nat_range="10.0.201"      # PSC NAT subnets: the next free /29 in <range>.0/24
@@ -38,4 +38,19 @@ psc_connections() {
     | jq -c --arg name "${name}" '.data.connections[]?
         | select(.type=="GCP_PRIVATE_SERVICE_CONNECT")
         | select($name=="" or .name==$name)'
+}
+
+# tls_values <tls_mode>: the connection types a tls_mode stands for, as the API's tls values
+# (true -> "true", false -> "false", both -> "true false"); returns 1 on anything else
+tls_values() {
+  case $1 in
+    true|false) echo $1 ;;
+    both) echo "true false" ;;
+    *) echo "ERROR: tls_mode must be true, false or both (got '$1')" >&2; return 1 ;;
+  esac
+}
+
+# ppv2_port <tls>: the PPv2 listener port a connection of that type needs
+ppv2_port() {
+  [[ $1 == true ]] && echo 29142 || echo 29042
 }
