@@ -7,7 +7,7 @@
 # A connection is all-TLS or all-plain, and tls / proxyProtocolV2 cannot be changed after the create.
 # A TLS connection needs client-to-node encryption on the cluster and the TLS PPv2 listener (29142, see
 # psc_add_proxy_protocol.bash). Every connection needs its own /29 NAT subnet; the next free one in
-# 10.0.201.0/24 is picked unless one is given.
+# ${default_nat_range}.0/24 (psc_common.bash) is picked unless one is given.
 #
 # usage: psc_connection_setup.bash [cluster_id] [tls true|false] [consumer_project] [connection_name] [nat_subnet]
 
@@ -15,8 +15,8 @@ script_dir=$(cd "$(dirname "$0")" && pwd)
 source "${script_dir}/psc_common.bash"
 
 cluster_id=${1:-${default_cluster_id}}
-tls=${2:-true}
-consumer_project=${3:-"cx-sa-lab"}
+tls=${2:-${default_tls_mode}}
+consumer_project=${3:-${default_consumer_project}}
 if [[ ${tls} == true ]]; then
   connection_name=${4:-"psc-tls-${cluster_id}"}
 else
@@ -33,8 +33,8 @@ fi
 if [[ -z ${nat_subnet} ]]; then
   used=$(jq -r '.data.natSubnetCidr // empty' <<< "${existing}")
   for offset in $(seq 0 8 248); do
-    if ! grep -qx "10.0.201.${offset}/29" <<< "${used}"; then
-      nat_subnet="10.0.201.${offset}/29"
+    if ! grep -qx "${default_nat_range}.${offset}/29" <<< "${used}"; then
+      nat_subnet="${default_nat_range}.${offset}/29"
       break
     fi
   done

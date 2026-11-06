@@ -18,8 +18,8 @@ done
 
 cluster_id=${args[0]:-${default_cluster_id}}
 connection_name=${args[1]:-}
-consumer_project=${args[2]:-"cx-sa-lab"}
-region=${args[3]:-"us-west1"}
+consumer_project=${args[2]:-${default_consumer_project}}
+region=${args[3]:-${default_region}}
 
 if [[ -z ${connection_name} ]]; then
   echo "usage: $0 [cluster_id] connection_name [consumer_project] [region] [--connection]" >&2

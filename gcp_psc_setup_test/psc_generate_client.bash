@@ -7,16 +7,20 @@
 # (the generated files declare the same variables/provider, so they cannot share one terraform directory).
 #
 # usage: psc_generate_client.bash [cluster_id] [connection_name] [consumer_project] [region] [network] [subnet]
+#   network / subnet: names or full paths; the subnet defaults to the network's name
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
 source "${script_dir}/psc_common.bash"
 
 cluster_id=${1:-${default_cluster_id}}
 connection_name=${2:-} # e.g. psc1 or psc-tls-54742; empty = all PSC connections
-consumer_project=${3:-"cx-sa-lab"}
-region=${4:-"us-west1"}
-consumer_network=${5:-"projects/${consumer_project}/global/networks/default"}
-consumer_subnet=${6:-"projects/${consumer_project}/regions/${region}/subnetworks/default"}
+consumer_project=${3:-${default_consumer_project}}
+region=${4:-${default_region}}
+consumer_network=${5:-${default_consumer_network}}
+consumer_subnet=${6:-${consumer_network##*/}}
+# full resource paths, as gcloud and the generated terraform want them
+[[ ${consumer_network} == */* ]] || consumer_network="projects/${consumer_project}/global/networks/${consumer_network}"
+[[ ${consumer_subnet} == */* ]] || consumer_subnet="projects/${consumer_project}/regions/${region}/subnetworks/${consumer_subnet}"
 
 # connections come from the REST API: it has everything the endpoint needs (service attachment, domain,
 # client route ID, tls), so only the optional terraform and the TLS name depend on cx

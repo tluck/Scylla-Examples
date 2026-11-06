@@ -6,7 +6,9 @@ project, for both plain CQL and TLS.
 Source for the TLS steps: the wiki page
 [How-to PSC TLS PPv2](https://scylladb.atlassian.net/wiki/spaces/RND/pages/493191169/How-to+PSC+TLS+PPv2).
 
-Defaults used by the scripts: consumer project `cx-sa-lab`, region `us-west1`, network/subnet `default`.
+Defaults used by the scripts, all set in `psc_common.bash`: cluster `54867`, consumer project `cx-sa-lab`, region
+`us-west1`, network/subnet `default`, restart interval `600s`, NAT subnets in `10.0.201.0/24`, plain (non-TLS) for
+`psc_connection_setup.bash`. Arguments on the command line override them.
 
 ## Key facts
 
@@ -60,7 +62,7 @@ binaries if you want them (see [Sample apps](#sample-apps)).
 `psc_setup_all.bash` runs steps 1-3 for both connection types, then prints the connect examples:
 
 ```bash
-./psc_setup_all.bash [cluster_id] [consumer_project] [region] [interval]   # e.g. 54742 cx-sa-lab us-west1 0s
+./psc_setup_all.bash [cluster_id] [interval] [consumer_project] [region] [network]   # e.g. 54867 0s cx-sa-lab us-west1
 ```
 
 It does each of the following only if it isn't already done, so it is safe to re-run:
@@ -103,6 +105,12 @@ Confirm:
 scylla-cloud cluster config get --cluster-id <cluster_id> native_transport_port_ssl_proxy_protocol  # 29142
 ```
 
+Some clusters have the listeners under the shard-aware keys instead:
+`native_shard_aware_transport_port_proxy_protocol` 29042 and `native_shard_aware_transport_port_ssl_proxy_protocol`
+29142. Cluster 55024 got them from ScyllaDB Cloud when it was created. Either key provides the listener, so the
+script accepts both. Never set the plain key on a cluster that has the shard-aware one: both would bind the same
+port.
+
 Existing connections do not change. Only new TLS connections use the new listener.
 
 ## 2. Create the PSC connection
@@ -115,8 +123,8 @@ connection, with `cx-sa-lab` in **Allowed GCP Projects**.
 ### TLS (or plain): script, REST API
 
 ```bash
-./psc_connection_setup.bash <cluster_id>                       # TLS connection psc-tls-<cluster_id>
-./psc_connection_setup.bash <cluster_id> false                 # plain connection psc-<cluster_id>
+./psc_connection_setup.bash <cluster_id> true                  # TLS connection psc-tls-<cluster_id>
+./psc_connection_setup.bash <cluster_id>                       # plain connection psc-<cluster_id> (default)
 ./psc_connection_setup.bash <cluster_id> true cx-sa-lab <name> <nat_subnet>
 ```
 

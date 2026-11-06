@@ -7,16 +7,17 @@
 #   3. the consumer endpoint for every PSC connection and the client examples (psc_generate_client.bash)
 # Every step skips what already exists, so the script can be re-run after a failure.
 #
-# usage: psc_setup_all.bash [cluster_id] [interval] [consumer_project] [region] 
+# usage: psc_setup_all.bash [cluster_id] [interval] [consumer_project] [region] [network]
 #   interval: time between node restarts when the PPv2 listeners are added (0s for a test cluster with no load)
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
 source "${script_dir}/psc_common.bash"
 
 cluster_id=${1:-${default_cluster_id}}
-interval=${2:-600s} # for prod give 10 minutes between the rolling node restarts; with idle/new use 0
+interval=${2:-${default_interval}} # 10 minutes between node restarts for a cluster under load; 0s for idle/new
 consumer_project=${3:-${default_consumer_project}}
 region=${4:-${default_region}}
+consumer_network=${5:-${default_consumer_network}}
 
 echo "=== 1/3 PPv2 listeners on cluster ${cluster_id} ==="
 "${script_dir}/psc_add_proxy_protocol.bash" ${cluster_id} ${interval} || exit 1
@@ -34,7 +35,7 @@ done
 
 echo
 echo "=== 3/3 consumer endpoints in ${consumer_project} ${region} ==="
-"${script_dir}/psc_generate_client.bash" ${cluster_id} "" ${consumer_project} ${region} || exit 1
+"${script_dir}/psc_generate_client.bash" ${cluster_id} "" ${consumer_project} ${region} ${consumer_network} || exit 1
 
 # psc_generate_client.bash wrote one sample_apps env file per ACTIVE connection; list them with the run commands
 echo
